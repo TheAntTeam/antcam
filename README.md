@@ -11,7 +11,37 @@ CNC CAM tools.
 
 ## Features
 
-* TODO
+### Feature Extraction (2.5D CNC - 3-axis)
+
+The feature extractor recognizes the following machining features from STEP files:
+
+| Feature | Type | Description |
+|---|---|---|
+| `step` | `StepFeature` | Horizontal face with open edges (step/shoulder) |
+| `pocket` | `PocketFeature` | Closed horizontal face with surrounding walls |
+| `opening` | `OpeningFeature` | Through-pocket (no bottom face) |
+| `hole_group` | `HoleGroup` | Group of holes with same diameter and depth |
+| `fillet` | `FilletFeature` | Concave cylindrical fillet (corner radius) |
+| `chamfer` | `ChamferFeature` | Inclined planar face between horizontal and vertical faces |
+| `countersunk_hole` | `CountersunkHoleFeature` | Countersunk hole (cylinder + cone) |
+| `slot` | `SlotFeature` | Elongated slot with constant width |
+
+### Hole classification
+
+- **Through holes** (`through=True`): no cap face at the bottom — visualized in magenta
+- **Blind holes** (`through=False`): has a planar cap face closing the bottom — visualized in red
+- Holes are grouped by diameter and depth into `HoleGroup` and marked as `tap_candidate`
+
+### Contour extraction
+
+- **Shadow projection**: orthogonal projection of all accessible faces onto the z-min plane
+- **Perimeter**: outer and inner contours of the projected shadow (orange wires)
+- Through holes are subtracted from the shadow shape
+
+### Model loading
+
+- STEP files via `Model.from_step(path, rx, ry, rz)` with optional Euler rotations
+- Working axis configurable (default: Z+)
 
 ## Documentation
 
