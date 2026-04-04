@@ -155,8 +155,8 @@ class FeatureExtractor:
                 if plane_feature: self.features.append(plane_feature)
 
         self._group_composite_features(cylinders, cones)
-        arc_groups = self.find_vertical_faces_with_xy_arcs()
-        self._find_holes_from_arc_groups(arc_groups)
+        self._arc_groups = self.find_vertical_faces_with_xy_arcs()
+        self._find_holes_from_arc_groups(self._arc_groups)
         self._group_holes()
         return self.features
 
@@ -769,7 +769,8 @@ class FeatureExtractor:
                     loc = circ.Location()
                     angle_span = abs(c.LastParameter() - c.FirstParameter())
                     key = (round(radius, 2), round(loc.X(), 2), round(loc.Y(), 2))
-                    z = np.dot([loc.X(), loc.Y(), loc.Z()], self.working_plane_normal)
+                    z = float(np.dot([loc.X(), loc.Y(), loc.Z()], self.working_plane_normal))
+                    if abs(z) < 1e-9: z = 0.0
                     z_key = round(z, 1)
                     if key not in groups:
                         groups[key] = {
@@ -851,10 +852,14 @@ class FeatureExtractor:
             for cf in cap_faces:
                 cf_s = BRepAdaptor_Surface(TopoDS.Face_s(cf), True)
                 cf_loc = cf_s.Plane().Axis().Location()
-                cf_proj = np.dot([cf_loc.X(), cf_loc.Y(), cf_loc.Z()], n)
-                if abs(cf_proj - z_bot) < tol_z:
+                cf_proj = float(np.dot([cf_loc.X(), cf_loc.Y(), cf_loc.Z()], n))
+                if abs(cf_proj) < 1e-9: cf_proj = 0.0
+                z_bot_norm = float(z_bot)
+                if abs(z_bot_norm) < 1e-9: z_bot_norm = 0.0
+                if abs(cf_proj - z_bot_norm) < tol_z:
                     caps_at_bot.append(cf)
             through = len(caps_at_bot) == 0
+            logger.debug(f"  r={radius:.2f} z_vals={[round(float(z),2) for z in z_vals]} z_bot={round(float(z_bot),2)} cap_faces={len(cap_faces)} caps_at_bot={len(caps_at_bot)} -> through={through}")
 
             # Scarta fori con depth=0 (geometria degenere)
             if depth < 0.1:
@@ -888,14 +893,42 @@ class FeatureExtractor:
 
     def _find_cap_faces(self, center_xy: np.ndarray, radius: float, z_vals: list) -> list:
         """Trova facce piane orizzontali il cui bordo esterno (primo wire)
-        contiene un arco circolare con raggio e centro compatibili con il foro."""
-        from OCP.BRepAdaptor import BRepAdaptor_Curve
-        from OCP.GeomAbs import GeomAbs_Circle
+        condivide un edge con la faccia cilindrica del foro."""
         from OCP.TopAbs import TopAbs_WIRE
         n = self.working_plane_normal
         tol_z = 0.2
         tol_r = 0.5
         cap_faces = []
+
+        # Raccoglie gli indici degli edge del bordo superiore/inferiore del cilindro
+        cyl_edge_indices = set()
+        exp_f = TopExp_Explorer(self.model.brep, TopAbs_FACE)
+        while exp_f.More():
+            nf = exp_f.Current()
+            nf_s = BRepAdaptor_Surface(TopoDS.Face_s(nf), True)
+            if nf_s.GetType() == GeomAbs_Cylinder:
+                cyl = nf_s.Cylinder()
+                if abs(cyl.Radius() - radius) < tol_r:
+                    ax = np.array([cyl.Axis().Direction().X(),
+                                   cyl.Axis().Direction().Y(),
+                                   cyl.Axis().Direction().Z()])
+                    if abs(np.dot(ax, n)) >= 0.99:
+                        loc = cyl.Axis().Location()
+                        dist = math.sqrt((loc.X() - float(center_xy[0]))**2 +
+                                         (loc.Y() - float(center_xy[1]))**2)
+                        if dist < tol_r:
+                            exp_e = TopExp_Explorer(nf, TopAbs_EDGE)
+                            while exp_e.More():
+                                idx = self._edge_face_map.FindIndex(exp_e.Current())
+                                if idx > 0:
+                                    cyl_edge_indices.add(idx)
+                                exp_e.Next()
+            exp_f.Next()
+
+        if not cyl_edge_indices:
+            return []
+
+        # Cerca facce piane orizzontali il cui PRIMO wire condivide un edge col cilindro
         exp_f = TopExp_Explorer(self.model.brep, TopAbs_FACE)
         while exp_f.More():
             nf = exp_f.Current()
@@ -907,31 +940,33 @@ class FeatureExtractor:
                 if abs(np.dot(nf_n, n)) >= 0.99:
                     nf_loc = nf_s.Plane().Axis().Location()
                     nf_proj = np.dot([nf_loc.X(), nf_loc.Y(), nf_loc.Z()], n)
+                    # Cerca a tutte le quote del foro
                     if any(abs(nf_proj - z) < tol_z for z in z_vals):
-                        # Itera solo il PRIMO wire (bordo esterno)
+                        # Controlla solo il PRIMO wire (bordo esterno)
                         exp_w = TopExp_Explorer(nf, TopAbs_WIRE)
                         if exp_w.More():
                             outer_wire = exp_w.Current()
                             exp_e = TopExp_Explorer(outer_wire, TopAbs_EDGE)
+                            shared = False
                             while exp_e.More():
-                                try:
-                                    c = BRepAdaptor_Curve(TopoDS.Edge_s(exp_e.Current()))
-                                    if c.GetType() == GeomAbs_Circle:
-                                        circ = c.Circle()
-                                        ax = np.array([circ.Axis().Direction().X(),
-                                                       circ.Axis().Direction().Y(),
-                                                       circ.Axis().Direction().Z()])
-                                        if abs(np.dot(ax, n)) >= 0.99:
-                                            if abs(circ.Radius() - radius) < tol_r:
-                                                loc = circ.Location()
-                                                dist = math.sqrt(
-                                                    (loc.X() - float(center_xy[0]))**2 +
-                                                    (loc.Y() - float(center_xy[1]))**2)
-                                                if dist < tol_r and nf not in cap_faces:
-                                                    cap_faces.append(nf)
-                                except Exception:
-                                    pass
+                                idx = self._edge_face_map.FindIndex(exp_e.Current())
+                                if idx in cyl_edge_indices:
+                                    shared = True
+                                    break
                                 exp_e.Next()
+                            if shared and nf not in cap_faces:
+                                # Verifica che un punto interno della faccia
+                                # sia dentro il cerchio del foro
+                                surf_nf = BRepAdaptor_Surface(TopoDS.Face_s(nf), True)
+                                u_mid = (surf_nf.FirstUParameter() + surf_nf.LastUParameter()) / 2
+                                v_mid = (surf_nf.FirstVParameter() + surf_nf.LastVParameter()) / 2
+                                p = surf_nf.Value(u_mid, v_mid)
+                                dx = p.X() - float(center_xy[0])
+                                dy = p.Y() - float(center_xy[1])
+                                dist_center = math.sqrt(dx*dx + dy*dy)
+                                if dist_center <= radius + tol_r:
+                                    cap_faces.append(nf)
+                                    logger.debug(f"    cap: r={radius:.2f} proj={nf_proj:.2f} dist_center={dist_center:.2f}")
             exp_f.Next()
         return cap_faces
 
