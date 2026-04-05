@@ -325,16 +325,18 @@ class FeatureExtractor:
                                  nf_s.Plane().Axis().Direction().Y(),
                                  nf_s.Plane().Axis().Direction().Z()])
                 if abs(np.dot(nf_n, self.working_plane_normal)) >= 0.99:
+                    # e' una faccia piana
                     nf_loc = nf_s.Plane().Axis().Location()
                     nf_proj = np.dot([nf_loc.X(), nf_loc.Y(), nf_loc.Z()],
                                      self.working_plane_normal)
-                    shares_edge = False
-                    exp_e = TopExp_Explorer(nf, TopAbs_EDGE)
-                    while exp_e.More():
-                        if self._edge_face_map.FindIndex(exp_e.Current()) in cyl_edge_indices:
-                            shares_edge = True
-                            break
-                        exp_e.Next()
+                    # shares_edge = False
+                    # exp_e = TopExp_Explorer(nf, TopAbs_EDGE)
+                    shares_edge = True
+                    # while exp_e.More():
+                    #     if self._edge_face_map.FindIndex(exp_e.Current()) in cyl_edge_indices:
+                    #         shares_edge = True
+                    #         break
+                    #     exp_e.Next()
                     if shares_edge:
                         is_at_bot = abs(nf_proj - proj_bot) < 0.1
                         is_at_top = abs(nf_proj - proj_top) < 0.1
@@ -806,7 +808,7 @@ class FeatureExtractor:
         for g in result:
             complete_z = {z: a for z, a in g["circles"].items() if abs(a - 2*math.pi) < 0.4}
             g["complete_z"] = complete_z
-            logger.debug(f"  r={g['radius']:.2f} xy={g['center_xy']} z_angles={[(z, round(math.degrees(a),1)) for z,a in g['circles'].items()]} complete_z={list(complete_z.keys())}")
+            # logger.debug(f"find_vertical_faces_with_xy_arcs: r={g['radius']:.2f} complete_z={list(complete_z.keys())}")
         return result
 
     def _find_holes_from_arc_groups(self, arc_groups: List[dict]):
@@ -859,7 +861,6 @@ class FeatureExtractor:
                 if abs(cf_proj - z_bot_norm) < tol_z:
                     caps_at_bot.append(cf)
             through = len(caps_at_bot) == 0
-            logger.debug(f"  r={radius:.2f} z_vals={[round(float(z),2) for z in z_vals]} z_bot={round(float(z_bot),2)} cap_faces={len(cap_faces)} caps_at_bot={len(caps_at_bot)} -> through={through}")
 
             # Scarta fori con depth=0 (geometria degenere)
             if depth < 0.1:
@@ -889,7 +890,6 @@ class FeatureExtractor:
             feat.props["from_arc_groups"] = True
             feat.props["cap_faces"] = cap_faces
             self.features.append(feat)
-            logger.debug(f"_find_holes_from_arc_groups: r={radius:.2f} through={through} depth={depth:.2f} z_vals={z_vals}")
 
     def _find_cap_faces(self, center_xy: np.ndarray, radius: float, z_vals: list) -> list:
         """Trova facce piane orizzontali il cui bordo esterno (primo wire)
@@ -928,6 +928,11 @@ class FeatureExtractor:
         if not cyl_edge_indices:
             return []
 
+        from OCP.BRepTools import BRepTools
+        from OCP.BRepClass import BRepClass_FaceClassifier
+        from OCP.TopAbs import TopAbs_IN, TopAbs_ON
+        z_bot = min(z_vals)
+
         # Cerca facce piane orizzontali il cui PRIMO wire condivide un edge col cilindro
         exp_f = TopExp_Explorer(self.model.brep, TopAbs_FACE)
         while exp_f.More():
@@ -954,6 +959,22 @@ class FeatureExtractor:
                                     shared = True
                                     break
                                 exp_e.Next()
+                            # Fallback geometrico a z_bot: un punto sul bordo del foro cade dentro la faccia
+                            if not shared and abs(nf_proj - z_bot) < tol_z:
+                                try:
+                                    classifier = BRepClass_FaceClassifier()
+                                    # Usa un punto leggermente dentro il bordo del foro (a radius*0.5 dal centro)
+                                    test_pnt = gp_Pnt(
+                                        float(center_xy[0]) + radius * 0.5,
+                                        float(center_xy[1]),
+                                        nf_proj
+                                    )
+                                    classifier.Perform(TopoDS.Face_s(nf), test_pnt, 1e-4)
+                                    state = classifier.State()
+                                    if state == TopAbs_IN or state == TopAbs_ON:
+                                        shared = True
+                                except Exception:
+                                    pass
                             if shared and nf not in cap_faces:
                                 # Verifica che un punto interno della faccia
                                 # sia dentro il cerchio del foro
@@ -966,7 +987,6 @@ class FeatureExtractor:
                                 dist_center = math.sqrt(dx*dx + dy*dy)
                                 if dist_center <= radius + tol_r:
                                     cap_faces.append(nf)
-                                    logger.debug(f"    cap: r={radius:.2f} proj={nf_proj:.2f} dist_center={dist_center:.2f}")
             exp_f.Next()
         return cap_faces
 

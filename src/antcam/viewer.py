@@ -193,7 +193,7 @@ class AntCamViewerWindow(QMainWindow):
                         for f in faces_to_show:
                             self.ocp_widget.display_shadow(f, color=color, transparency=0.6)
                     # Mostra cap_faces semitrasparenti in verde chiaro
-                    show_cap_faces = True  # flag per mostrare i candidati tappo
+                    show_cap_faces = False  # flag per mostrare i candidati tappo
                     if show_cap_faces:
                         for cap in hole.props.get("cap_faces", []):
                             self.ocp_widget.display_shadow(cap, color=(0.2, 1.0, 0.2), transparency=0.4)

@@ -5,7 +5,7 @@ from antcam.feature_extractor import FeatureExtractor
 from antcam.contour_extractor import ContourExtractor
 from antcam.viewer import show_model_with_features
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("antcam")
 
 def run_feature_viewer(step_file_path, rx=0.0, ry=0.0, rz=0.0):

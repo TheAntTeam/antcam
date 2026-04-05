@@ -67,7 +67,7 @@ class ContourExtractor:
             logger.info(f"ContourExtractor: {len(wires)} wire perimetro")
             return wires
         except Exception as e:
-            logger.debug(f"extract_perimeter error: {e}")
+            logger.warning(f"extract_perimeter error: {e}")
             return []
     # ------------------------------------------------------------------
 
@@ -159,15 +159,10 @@ class ContourExtractor:
                     if proj.More():
                         proj_wire = proj.Current()
                         face_2d = BRepBuilderAPI_MakeFace(plane, TopoDS.Wire_s(proj_wire))
-                        logger.debug(f"_project_faces_to_plane: MakeFace IsDone={face_2d.IsDone()} Error={face_2d.Error()}")
                         if face_2d.IsDone():
-                            f = face_2d.Face()
-                            logger.debug(f"  face IsNull={f.IsNull()} ShapeType={f.ShapeType()}")
-                            plane_faces.append(f)
-                    else:
-                        logger.debug("_project_faces_to_plane: proj.More() is False")
-                except Exception as e:
-                    logger.debug(f"_project_faces_to_plane error: {e}")
+                            plane_faces.append(face_2d.Face())
+                except Exception:
+                    pass
                 exp_w.Next()
         return plane_faces
 
@@ -188,18 +183,14 @@ class ContourExtractor:
                 if fuse.IsDone() and not fuse.Shape().IsNull():
                     result = fuse.Shape()
                 else:
-                    logger.debug("_fuse_faces: fuse step failed, using compound")
                     return compound
-            logger.debug(f"_fuse_faces: fuse completato su {len(plane_faces)} facce")
             return result
-        except Exception as e:
-            logger.debug(f"_fuse_faces error: {e}")
+        except Exception:
             return compound
 
     def _cut_through_holes(self, shadow: TopoDS_Shape, plane) -> TopoDS_Shape:
         """Sottrae i dischi dei fori passanti dalla shape ombra."""
         from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut
-        from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeEdge, BRepBuilderAPI_MakeWire
         from OCP.GeomAbs import GeomAbs_Cylinder
         n = self.working_plane_normal
         z_min = self._min_proj_z
@@ -207,9 +198,7 @@ class ContourExtractor:
 
         n_through = sum(1 for f in self._features if f.type == "hole_group" and f.props.get("through"))
         n_total_groups = sum(1 for f in self._features if f.type == "hole_group")
-        logger.debug(f"_cut_through_holes: {n_total_groups} hole_group totali, {n_through} passanti")
-        for feat in self._features:
-            logger.debug(f"  feature type={feat.type} props={feat.props}")
+        logger.info(f"ContourExtractor: {n_through}/{n_total_groups} hole_group passanti")
 
         for feat in self._features:
             if feat.type != "hole_group" or not feat.props.get("through"):
@@ -243,8 +232,8 @@ class ContourExtractor:
                     cut.Build()
                     if cut.IsDone() and not cut.Shape().IsNull():
                         result = cut.Shape()
-                except Exception as e:
-                    logger.debug(f"_cut_through_holes error: {e}")
+                except Exception:
+                    pass
         return result
 
     def _compute_bbox(self, brep):

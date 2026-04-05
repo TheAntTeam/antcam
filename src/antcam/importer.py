@@ -37,14 +37,12 @@ def import_step(path: str):
         raise ValueError(f"Errore lettura STEP: {path}")
     reader.TransferRoots()
     shape = reader.OneShape()
-    logger.debug(f"STEP importato, shape: {shape}")
     return shape
 
 
 def import_stl(path: str, auto_fix=True):
     logger.info(f"Import STL: {path}")
     mesh = trimesh.load_mesh(path)
-    logger.debug(f"STL loaded: {len(mesh.vertices)} vertex, {len(mesh.faces)} faces")
 
     # Validazione pre-fix
     report_before = validate_stl(mesh)
