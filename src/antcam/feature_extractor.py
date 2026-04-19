@@ -8,13 +8,14 @@ import numpy as np
 
 from OCP.TopExp import TopExp, TopExp_Explorer
 from OCP.TopAbs import TopAbs_FACE, TopAbs_EDGE, TopAbs_REVERSED, TopAbs_SHAPE
-from OCP.BRepAdaptor import BRepAdaptor_Surface
+from OCP.BRepAdaptor import BRepAdaptor_Surface, BRepAdaptor_Curve
 from OCP.GeomAbs import (
     GeomAbs_Plane,
     GeomAbs_Cylinder,
     GeomAbs_Cone,
     GeomAbs_Sphere,
-    GeomAbs_Torus
+    GeomAbs_Torus,
+    GeomAbs_Circle,
 )
 from OCP.BRep import BRep_Tool
 from OCP.TopoDS import TopoDS, TopoDS_Face
@@ -118,8 +119,12 @@ class FeatureExtractor:
     def extract(self) -> List[Feature]:
         logger.info(f"Extracting features (Tool Axis: {self.working_plane_normal})")
         self.features = []
-        if not self.model or not hasattr(self.model, 'brep'): raise ValueError("Model BRep not available")
-        
+
+        # Se non c'è un BRep valido, salta l'estrazione feature BRep
+        if not self.model or not hasattr(self.model, 'brep') or self.model.brep is None:
+            logger.warning("Nessun BRep disponibile: salto estrazione feature BRep (probabile STL)")
+            return self.features
+
         self._calculate_brep_bbox(self.model.brep)
         self._edge_to_faces = self._map_edge_to_faces(self.model.brep)
 
@@ -736,8 +741,9 @@ class FeatureExtractor:
     def find_vertical_faces_with_xy_arcs(self) -> List[dict]:
         """Trova archi circolari con asse parallelo all'utensile nel BRep,
         deduplicati per edge. Raggruppa per (radius, cx, cy)."""
-        from OCP.BRepAdaptor import BRepAdaptor_Curve
-        from OCP.GeomAbs import GeomAbs_Circle
+        if not self.model or not hasattr(self.model, 'brep') or self.model.brep is None:
+            logger.warning("Nessun BRep disponibile: salto find_vertical_faces_with_xy_arcs (probabile STL)")
+            return []
 
         groups: Dict[tuple, dict] = {}
         seen_edge_indices = set()

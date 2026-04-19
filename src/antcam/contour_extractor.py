@@ -31,6 +31,9 @@ class ContourExtractor:
     def extract(self) -> Optional[TopoDS_Shape]:
         """Restituisce la shape 2D (ombra proiettata) sul piano z-min, o None."""
         brep = self.model.brep
+        if brep is None:
+            logger.warning("Nessun BRep disponibile: salto estrazione contour (probabile STL)")
+            return None
         self._compute_bbox(brep)
 
         accessible_faces = self._collect_accessible_faces(brep)
