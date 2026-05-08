@@ -36,6 +36,11 @@ def get_capsule_from_int(handle: int):
     return ctypes.pythonapi.PyCapsule_New(handle, None, None)
 
 class QOCPWidget(QWidget):
+    """Qt widget hosting an OCC 3D view and emitting high-level interaction signals.
+
+    Rendering is throttled with a dirty-flag timer to reduce redundant redraws
+    during resize and interactive camera manipulation.
+    """
     face_clicked = Signal(object, bool)
     context_menu_requested = Signal(object, object)
     cycle_requested = Signal(int, object)
@@ -112,6 +117,7 @@ class QOCPWidget(QWidget):
                 pass
 
     def enable_face_selection(self, ais_shape):
+        """Enable face-level picking on the displayed model AIS shape."""
         if not self._is_initialized or not self.context or ais_shape is None:
             return
         self._selection_target = ais_shape
@@ -126,6 +132,7 @@ class QOCPWidget(QWidget):
             logger.warning(f"Impossibile attivare la selezione facce: {e}")
 
     def detect_face_at(self, pos: QPoint):
+        """Return the currently detected face under screen position, if any."""
         if not self._is_initialized or not self.context or not self.view or not self._selection_enabled:
             return None
         try:
@@ -138,7 +145,7 @@ class QOCPWidget(QWidget):
         return None
 
     def get_detected_faces(self, pos: Optional[QPoint] = None, max_count: int = 64):
-        """Restituisce le facce intercettate dal puntatore, ordinate per profondita' di detection."""
+        """Collect faces under cursor ordered by OCC detection depth."""
         if not self._is_initialized or not self.context or not self.view or not self._selection_enabled:
             return []
         query_pos = pos or self._last_pos
@@ -301,6 +308,7 @@ class QOCPWidget(QWidget):
         return ais_shape
 
 class AntCamViewerWindow(QMainWindow):
+    """Main interactive window used to inspect and manually tag STEP features."""
     def __init__(self, model, features: List, working_plane_normal=(0.0, 0.0, 1.0),
                  contour_shadow=None, perimeter=None, vertical_arc_groups=None):
         super().__init__()
@@ -334,9 +342,14 @@ class AntCamViewerWindow(QMainWindow):
         QTimer.singleShot(500, self._load_data)
 
     def _load_data(self):
+        """Load model geometry and initialize rendering overlays.
+
+        The body is always displayed first, then extracted feature overlays are
+        drawn. Face-selection services are only enabled for real BRep models.
+        """
         if not self.model: return
 
-        # Determina quale shape visualizzare
+        # Prefer native BRep; fallback to on-the-fly mesh tessellation shape.
         shape_to_display = self.model.brep
 
         # Se non c'è BRep ma c'è mesh (STL), converti la mesh in shape OCP
@@ -434,6 +447,7 @@ class AntCamViewerWindow(QMainWindow):
         )
 
     def _clear_face_selection(self):
+        """Clear active face selection overlays while keeping manual assignments."""
         self._selected_face_id = None
         if self._selected_face_ais is not None:
             self.ocp_widget.remove_interactive(self._selected_face_ais)
@@ -445,6 +459,7 @@ class AntCamViewerWindow(QMainWindow):
         self._update_filter_status()
 
     def _clear_all_manual_assignments(self):
+        """Remove all user-assigned feature overlays and reset selection state."""
         self._manual_face_assignments.clear()
         for overlays in self._manual_face_ais.values():
             fill = overlays.get("fill")
@@ -463,6 +478,7 @@ class AntCamViewerWindow(QMainWindow):
         self.statusBar().showMessage("Tutte le facce deselezionate")
 
     def _toggle_accessible_filter(self):
+        """Toggle candidate visibility between accessible-only and all faces."""
         if not self._selection_service:
             return
         self._accessible_only = not self._accessible_only
@@ -473,6 +489,7 @@ class AntCamViewerWindow(QMainWindow):
         self._update_filter_status()
 
     def _on_face_clicked(self, face_shape, ctrl_pressed: bool):
+        """Handle left-click selection with optional Ctrl-based multi-selection."""
         if not self._selection_service:
             return
         candidate = self._selection_service.find_candidate_by_shape(face_shape, accessible_only=self._accessible_only)
@@ -489,6 +506,7 @@ class AntCamViewerWindow(QMainWindow):
             self._select_face_candidate(candidate)
 
     def _on_cycle_requested(self, step: int, mouse_pos):
+        """Cycle selection through candidates detected below current cursor position."""
         if not self._selection_service:
             return
         candidate = self._cycle_candidate_under_cursor(step, mouse_pos)
@@ -498,6 +516,11 @@ class AntCamViewerWindow(QMainWindow):
             self.statusBar().showMessage("Nessuna faccia accessibile sotto il puntatore")
 
     def _cycle_candidate_under_cursor(self, step: int, mouse_pos=None):
+        """Return next selectable candidate from the under-cursor detection stack.
+
+        The cycle is intentionally local: only faces currently under the pointer
+        are considered, then filtered by accessibility mode.
+        """
         if not self._selection_service:
             return None
         detected_shapes = self.ocp_widget.get_detected_faces(pos=mouse_pos)
@@ -525,6 +548,7 @@ class AntCamViewerWindow(QMainWindow):
         return self._selection_service.get_candidate(ordered_ids[next_idx])
 
     def _select_face_candidate(self, candidate):
+        """Make one candidate active and render its selection overlay."""
         self._clear_face_selection()
         self._selected_face_id = candidate.face_id
         self._selected_face_ids.add(candidate.face_id)
@@ -545,6 +569,7 @@ class AntCamViewerWindow(QMainWindow):
         )
 
     def _toggle_face_candidate(self, candidate):
+        """Toggle one candidate in the multi-selection set (Ctrl+click semantics)."""
         fid = candidate.face_id
         if fid in self._selected_face_ids:
             self._selected_face_ids.remove(fid)
@@ -568,6 +593,7 @@ class AntCamViewerWindow(QMainWindow):
         self.statusBar().showMessage(f"Facce selezionate: {len(self._selected_face_ids)}")
 
     def _on_context_menu_requested(self, face_shape, global_pos):
+        """Open context menu bound to current selection without re-picking faces."""
         if not self._selection_service:
             return
         candidate = None
@@ -587,6 +613,7 @@ class AntCamViewerWindow(QMainWindow):
         self._show_face_context_menu(candidate, global_pos)
 
     def _show_face_context_menu(self, candidate, global_pos):
+        """Build and show the context menu for a specific selected face."""
         menu = QMenu(self)
         info = menu.addAction(
             f"Faccia #{candidate.face_id} | {candidate.surface_type} | accessibile={'si' if candidate.accessible_from_top else 'no'}"
@@ -642,6 +669,7 @@ class AntCamViewerWindow(QMainWindow):
         menu.exec(global_pos)
 
     def _assign_hole_to_selected(self, through: bool):
+        """Assign hole semantics to all currently selected compatible faces."""
         if not self._selection_service or len(self._selected_face_ids) < 2:
             return
         selected_ids = sorted(self._selected_face_ids)
@@ -657,6 +685,7 @@ class AntCamViewerWindow(QMainWindow):
         )
 
     def _assign_manual_feature(self, face_id: int, feature_type: str):
+        """Assign one manual feature type to a face and refresh its overlay."""
         candidate = self._selection_service.get_candidate(face_id) if self._selection_service else None
         if candidate is None:
             return
@@ -666,6 +695,7 @@ class AntCamViewerWindow(QMainWindow):
         logger.info("Feature manuale assegnata: faccia #%d -> %s", face_id, feature_type)
 
     def _remove_manual_feature(self, face_id: int):
+        """Remove manual feature assignment and related overlays for one face."""
         self._manual_face_assignments.pop(face_id, None)
         overlay = self._manual_face_ais.pop(face_id, None)
         if overlay is not None:
@@ -680,6 +710,7 @@ class AntCamViewerWindow(QMainWindow):
             self._select_face_candidate(candidate)
 
     def _refresh_manual_face_overlay(self, face_id: int):
+        """Rebuild colored wire overlay representing manual assignment state."""
         candidate = self._selection_service.get_candidate(face_id) if self._selection_service else None
         if candidate is None:
             return

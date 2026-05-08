@@ -42,3 +42,34 @@ def test_mixed_through_and_blind_on_mounting_spider():
     assert through >= 1
     assert blind >= 1
 
+
+@pytest.mark.parametrize(
+    "step_path",
+    [
+        "tests/data/bottle_opener.step",
+        "tests/data/flange.step",
+        "tests/data/mounting_spider.step",
+    ],
+)
+def test_hole_group_through_consistency(step_path):
+    if not os.path.exists(step_path):
+        pytest.skip(f"File {step_path} non trovato per il test")
+
+    model = Model.from_step(step_path)
+    extractor = FeatureExtractor(model)
+    features = extractor.extract()
+    hole_groups = [f for f in features if getattr(f, "type", "") == "hole_group"]
+
+    if not hole_groups:
+        pytest.skip(f"Nessun hole_group estratto da {step_path}")
+
+    for group in hole_groups:
+        holes = getattr(group, "holes", [])
+        assert holes, "Ogni hole_group deve contenere almeno un hole"
+        assert group.props.get("count") == len(holes)
+
+        through_values = {bool(h.props.get("through")) for h in holes}
+        assert len(through_values) == 1, "I hole nel gruppo devono avere classificazione through coerente"
+        assert bool(group.props.get("through")) == through_values.pop()
+
+

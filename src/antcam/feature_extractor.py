@@ -3,6 +3,12 @@ import math
 from dataclasses import dataclass, field
 from typing import List, Any, Optional, Tuple, Dict, Union
 
+"""Feature extraction pipeline for BRep models.
+
+The extractor focuses on 2.5D manufacturing-relevant features and combines
+surface classification, accessibility checks, and geometric grouping.
+"""
+
 import trimesh
 import numpy as np
 
@@ -33,6 +39,13 @@ logger = logging.getLogger("antcam")
 
 @dataclass
 class Feature:
+    """Base feature container.
+
+    Attributes:
+        type: Semantic feature type label.
+        geometry: Optional OCC geometry associated with the feature.
+        props: Arbitrary metadata used by visualization and downstream logic.
+    """
     type: str
     geometry: Any = None
     props: dict = field(default_factory=dict)
@@ -106,7 +119,12 @@ class ChamferFeature(Feature):
 # ============================================================
 
 class FeatureExtractor:
-    def __init__(self, model, working_plane_normal: Tuple[float, float, float] = (0.0, 0.0, 1.0)):
+    """Extract manufacturable features from a BRep model.
+
+    The main workflow is orchestrated by :meth:`extract`, which gathers raw
+    surface candidates and then builds higher-level composite features.
+    """
+    def __init__(self, model, working_plane_normal: Tuple[float, ...] = (0.0, 0.0, 1.0)):
         self.model = model
         self.features: List[Feature] = []
         self._bbox = None
@@ -117,6 +135,12 @@ class FeatureExtractor:
         self._min_proj_z = 0.0
 
     def extract(self) -> List[Feature]:
+        """Run the full feature extraction pipeline.
+
+        Returns:
+            List[Feature]: Extracted features. The list can be empty when no
+            valid BRep is available (for example STL mesh-only models).
+        """
         logger.info(f"Extracting features (Tool Axis: {self.working_plane_normal})")
         self.features = []
 
@@ -166,7 +190,11 @@ class FeatureExtractor:
         return self.features
 
     def _is_face_obstructed(self, face, brep) -> bool:
-        """Per CNC 3 assi (2.5D): verifica se c'è materiale sopra la faccia lungo l'asse utensile."""
+        """Return True if material exists above a face along the tool axis.
+
+        This is a conservative 2.5D accessibility test used to reject faces that
+        are not directly machinable from the selected direction.
+        """
         surf = BRepAdaptor_Surface(face, True)
         u = (surf.FirstUParameter() + surf.LastUParameter()) / 2
         v = (surf.FirstVParameter() + surf.LastVParameter()) / 2
@@ -191,8 +219,7 @@ class FeatureExtractor:
         return False
 
     def _is_cylinder_obstructed(self, face, surf) -> bool:
-        """Per i fillet cilindrici: parte dal punto piu' alto del cilindro
-        (quota massima lungo l'asse utensile) e verifica se c'e' materiale sopra."""
+        """Return True if a cylindrical area is blocked along the tool axis."""
         # Campiona il bordo superiore del cilindro (massima proiezione sull'asse utensile)
         u1, u2 = surf.FirstUParameter(), surf.LastUParameter()
         v1, v2 = surf.FirstVParameter(), surf.LastVParameter()
@@ -224,6 +251,7 @@ class FeatureExtractor:
         return False
 
     def _calculate_brep_bbox(self, shape):
+        """Compute axis-projected min/max extents used by depth heuristics."""
         bbox = Bnd_Box()
         BRepBndLib.Add_s(shape, bbox)
         xmin, ymin, zmin, xmax, ymax, zmax = bbox.Get()
@@ -233,6 +261,7 @@ class FeatureExtractor:
         self._min_proj_z = min(np.dot(c, self.working_plane_normal) for c in corners)
 
     def _map_edge_to_faces(self, shape):
+        """Build a lightweight edge-to-faces adjacency map."""
         mapping = {}
         exp_faces = TopExp_Explorer(shape, TopAbs_FACE)
         while exp_faces.More():
@@ -248,6 +277,7 @@ class FeatureExtractor:
         return mapping
 
     def _analyze_cylindrical_face(self, face, surf) -> Optional[dict]:
+        """Classify a cylindrical face candidate and return normalized metadata."""
         radius = surf.Cylinder().Radius()
         axis_dir = np.array((surf.Cylinder().Axis().Direction().X(), surf.Cylinder().Axis().Direction().Y(), surf.Cylinder().Axis().Direction().Z()))
         dot_axis = abs(np.dot(axis_dir, self.working_plane_normal))
@@ -297,9 +327,7 @@ class FeatureExtractor:
         return None
 
     def _cylinder_has_real_bottom(self, face, surf) -> bool:
-        """Un foro e' cieco se ha esattamente UNA faccia piana orizzontale adiacente
-        che non e' ne' la faccia superiore ne' quella inferiore del pezzo.
-        Se ha zero o due facce piane orizzontali adiacenti, e' passante."""
+        """Heuristic blind-hole check based on adjacent horizontal cap faces."""
         v1, v2 = surf.FirstVParameter(), surf.LastVParameter()
         u_mid = (surf.FirstUParameter() + surf.LastUParameter()) / 2
         p_v1 = surf.Value(u_mid, v1)
@@ -364,7 +392,7 @@ class FeatureExtractor:
         return []
 
     def _cylinder_has_bottom(self, face) -> bool:
-        """Verifica se il cilindro ha una faccia piana di fondo (usata per slot)."""
+        """Return True when a cylinder has an adjacent horizontal floor face."""
         exp = TopExp_Explorer(face, TopAbs_EDGE)
         while exp.More():
             h = hash(exp.Current()) if hasattr(exp.Current(), "__hash__") else exp.Current().this
@@ -379,10 +407,7 @@ class FeatureExtractor:
         return False
 
     def _plane_has_floor(self, face, proj_z: float) -> bool:
-        """True se la cavità è cieca (la faccia è il fondo reale).
-        Controlla se le pareti verticali adiacenti hanno tutti gli edge condivisi
-        (nessun bordo libero in basso = cavità chiusa = cieca).
-        """
+        """Return True if a planar cavity behaves like a closed-bottom pocket."""
         exp = TopExp_Explorer(face, TopAbs_EDGE)
         while exp.More():
             h = hash(exp.Current()) if hasattr(exp.Current(), "__hash__") else exp.Current().this
@@ -404,6 +429,7 @@ class FeatureExtractor:
 
 
     def _analyze_conical_face(self, face, surf) -> Optional[dict]:
+        """Classify a conical face and return normalized cone metadata."""
         # Rimosso il controllo iniziale face.Orientation() != TopAbs_REVERSED
         cone = surf.Cone()
         axis_dir = np.array((cone.Axis().Direction().X(), cone.Axis().Direction().Y(), cone.Axis().Direction().Z()))
@@ -426,6 +452,7 @@ class FeatureExtractor:
                 "radii": (r1, r2), "axis": tuple(axis_dir), "center": (cone.Axis().Location().X(), cone.Axis().Location().Y(), cone.Axis().Location().Z()), "face": face}
 
     def _analyze_planar_face_topologicamente(self, face, surf) -> Optional[Feature]:
+        """Classify planar faces into step/pocket/opening candidates."""
         axis = surf.Plane().Axis()
         normal = np.array((axis.Direction().X(), axis.Direction().Y(), axis.Direction().Z()))
         dot = np.dot(normal, self.working_plane_normal)
@@ -466,7 +493,7 @@ class FeatureExtractor:
         return None  # Pareti verticali non lavorabili in 2.5D
 
     def _analyze_chamfer_face(self, face, surf) -> Optional[Feature]:
-        """Riconosce un chamfer piano: faccia inclinata confinante con una faccia orizzontale e una verticale."""
+        """Detect planar chamfer candidates from orientation and adjacency rules."""
         axis = surf.Plane().Axis()
         normal = np.array((axis.Direction().X(), axis.Direction().Y(), axis.Direction().Z()))
         dot = abs(np.dot(normal, self.working_plane_normal))
@@ -503,6 +530,7 @@ class FeatureExtractor:
         return ChamferFeature(angle=angle_deg, width=width, face=face)
 
     def _group_composite_features(self, cylinders, cones):
+        """Build composite features (slots, countersinks, fillets) from raw candidates."""
         used_cones, used_cyls = set(), set()
 
         # Separa cilindri normali da semicilindri di asola e archi forward
@@ -594,7 +622,7 @@ class FeatureExtractor:
                 # HoleFeature per cilindri completi: gestita da _find_holes_from_arc_groups
 
     def _group_holes(self):
-        """Raggruppa HoleFeature con stesso diametro e stessa profondità in HoleGroup."""
+        """Group compatible HoleFeature items into HoleGroup aggregates."""
         holes = [f for f in self.features if isinstance(f, HoleFeature)]
         if not holes:
             return
@@ -625,8 +653,7 @@ class FeatureExtractor:
             ))
 
     def _find_edge_holes(self):
-        """Trova fori sul bordo del pezzo: facce piane verticali con archi circolari
-        nel piano XY che insieme coprono 2pi formano un foro."""
+        """Detect edge holes using circular-arc accumulation on vertical planes."""
         from OCP.BRepAdaptor import BRepAdaptor_Curve
         from OCP.GeomAbs import GeomAbs_Circle
 
@@ -739,8 +766,7 @@ class FeatureExtractor:
             self.features.append(feat)
 
     def find_vertical_faces_with_xy_arcs(self) -> List[dict]:
-        """Trova archi circolari con asse parallelo all'utensile nel BRep,
-        deduplicati per edge. Raggruppa per (radius, cx, cy)."""
+        """Find circular arcs aligned with tool axis and group them by XY center/radius."""
         if not self.model or not hasattr(self.model, 'brep') or self.model.brep is None:
             logger.warning("Nessun BRep disponibile: salto find_vertical_faces_with_xy_arcs (probabile STL)")
             return []
@@ -818,8 +844,7 @@ class FeatureExtractor:
         return result
 
     def _find_holes_from_arc_groups(self, arc_groups: List[dict]):
-        """Converte i gruppi di archi circolari in HoleFeature,
-        filtrando per accessibilita' e determinando passante/cieco."""
+        """Convert grouped arcs into HoleFeature items with blind/through classification."""
         for group in arc_groups:
             complete_z = group.get("complete_z", {})
             if not complete_z:
@@ -898,8 +923,7 @@ class FeatureExtractor:
             self.features.append(feat)
 
     def _find_cap_faces(self, center_xy: np.ndarray, radius: float, z_vals: list) -> list:
-        """Trova facce piane orizzontali il cui bordo esterno (primo wire)
-        condivide un edge con la faccia cilindrica del foro."""
+        """Find candidate planar cap faces associated with a cylindrical hole wall."""
         from OCP.TopAbs import TopAbs_WIRE
         n = self.working_plane_normal
         tol_z = 0.2
@@ -997,6 +1021,7 @@ class FeatureExtractor:
         return cap_faces
 
     def _get_faces(self, shape):
+        """Return all TopoDS faces from a shape."""
         exp = TopExp_Explorer(shape, TopAbs_FACE)
         faces = []
         while exp.More(): faces.append(exp.Current()); exp.Next()

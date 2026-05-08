@@ -12,10 +12,20 @@ import trimesh.repair
 import numpy as np
 from antcam.logger import setup_logger
 
+"""Model import utilities for STEP and STL sources.
+
+The current production strategy is:
+- STEP/STP -> native BRep workflow
+- STL -> mesh-first workflow (BRep conversion disabled by default in Model)
+
+Mesh-to-BRep helpers are kept for experimentation and debug workflows but are
+not part of the default STL pipeline.
+"""
+
 logger = setup_logger()
 
 def apply_rotation(shape, rx: float = 0.0, ry: float = 0.0, rz: float = 0.0):
-    """Applica una rotazione al BRep."""
+    """Apply XYZ Euler-like incremental rotations (degrees) to a BRep shape."""
     trsf = gp_Trsf()
     origin = gp_Pnt(0, 0, 0)
     if rx != 0.0:
@@ -31,6 +41,7 @@ def apply_rotation(shape, rx: float = 0.0, ry: float = 0.0, rz: float = 0.0):
 
 
 def import_step(path: str):
+    """Load a STEP file and return its root shape."""
     logger.info(f"Import STEP: {path}")
     reader = STEPControl_Reader()
     status = reader.ReadFile(path)
@@ -41,6 +52,7 @@ def import_step(path: str):
 
 
 def import_stl(path: str, auto_fix=True):
+    """Load an STL file as a trimesh object, optionally applying mesh repairs."""
     logger.info(f"Import STL: {path}")
     mesh = trimesh.load_mesh(path)
     if auto_fix:
@@ -49,6 +61,7 @@ def import_stl(path: str, auto_fix=True):
 
 
 def fix_stl(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
+    """Apply basic mesh cleanup (normals, winding, holes, orphan vertices)."""
     logger.info("Fix STL running...")
     trimesh.repair.fix_normals(mesh)
     trimesh.repair.fill_holes(mesh)
@@ -60,7 +73,7 @@ def fix_stl(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
 
 
 def _merge_planar_faces(mesh, angle_tol=1e-2):
-    """Crea una faccia OCC per ogni triangolo della mesh (nessun merging)."""
+    """Build one OCC face per triangle (safe fallback, no planar aggregation)."""
     from OCP.BRepBuilderAPI import BRepBuilderAPI_MakePolygon, BRepBuilderAPI_MakeFace
     polygons = []
     for face in mesh.faces:
@@ -72,14 +85,18 @@ def _merge_planar_faces(mesh, angle_tol=1e-2):
     return polygons
 
 def mesh_to_brep(mesh: trimesh.Trimesh):
-    """Converte mesh in BRep con merging planare avanzato."""
+    """Convert a triangular mesh into a sewn BRep shell.
+
+    This path remains conservative: triangle-wise face creation, sewing, and an
+    optional domain unification attempt.
+    """
     from OCP.BRepBuilderAPI import BRepBuilderAPI_Sewing
     logger.info(f"mesh_to_brep: {len(mesh.faces)} triangoli")
-    # 1. Prova merging planare avanzato
+    # 1) Build candidate faces from mesh triangles.
     all_faces = _merge_planar_faces(mesh)
     if not all_faces:
         logger.warning("Merging planare fallito o non applicabile, uso triangoli originali")
-        # Fallback: triangoli
+        # Fallback: rebuild using direct triangle conversion.
         from OCP.BRepBuilderAPI import BRepBuilderAPI_MakePolygon, BRepBuilderAPI_MakeFace
         for face in mesh.faces:
             try:
@@ -89,13 +106,13 @@ def mesh_to_brep(mesh: trimesh.Trimesh):
                 if f.IsDone():
                     all_faces.append(f.Face())
             except: pass
-    # 2. Cucitura
+    # 2) Sew faces into a single shell-like shape.
     sewing = BRepBuilderAPI_Sewing(1e-2)
     for f in all_faces:
         sewing.Add(f)
     sewing.Perform()
     sewn = sewing.SewedShape()
-    # 3. Unificazione avanzata
+    # 3) Try same-domain unification to simplify contiguous regions.
     logger.info("mesh_to_brep: unificazione facce (UnifySameDomain)...")
     try:
         unify = ShapeUpgrade_UnifySameDomain(sewn, True, True, True)
@@ -109,23 +126,32 @@ def mesh_to_brep(mesh: trimesh.Trimesh):
     return result
 
 class Model:
+    """Container for imported geometry (BRep and/or mesh)."""
     def __init__(self, brep=None, mesh=None):
         self.brep = brep; self.mesh = mesh
 
     @classmethod
     def from_step(cls, path, rx=0.0, ry=0.0, rz=0.0):
+        """Create a model from STEP, applying optional rotations."""
         brep = import_step(path)
         if any([rx, ry, rz]): brep = apply_rotation(brep, rx, ry, rz)
         return cls(brep=brep)
 
     @classmethod
     def from_stl(cls, path, convert_to_brep=True):
+        """Create a model from STL in mesh-first mode.
+
+        The ``convert_to_brep`` argument is currently retained for API
+        compatibility. STL import returns mesh-only to keep the workflow robust.
+        """
         mesh = import_stl(path)
-        # Conversione a BRep disattivata: restituisce solo la mesh
+        # BRep conversion intentionally disabled in the default STL path.
         return cls(mesh=mesh)
 
 def validate_stl(mesh):
+    """Return a compact mesh summary used by diagnostics/tests."""
     return {"vertices": len(mesh.vertices), "faces": len(mesh.faces)}
 
 def is_multibody(mesh):
+    """Detect whether a mesh contains multiple disconnected components."""
     return len(mesh.split(only_watertight=False)) > 1

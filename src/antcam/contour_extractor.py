@@ -1,6 +1,12 @@
 import logging
 from typing import List, Tuple, Optional
 
+"""2.5D contour extraction utilities from top-accessible BRep faces.
+
+The extractor projects accessible faces onto a plane aligned with the tool axis,
+fuses projected regions, and optionally subtracts through-hole footprints.
+"""
+
 import numpy as np
 
 from OCP.TopExp import TopExp_Explorer, TopExp
@@ -21,6 +27,7 @@ logger = logging.getLogger("antcam")
 
 
 class ContourExtractor:
+    """Build projected shadow contours from the current model and feature set."""
     def __init__(self, model, working_plane_normal: Tuple[float, float, float] = (0.0, 0.0, 1.0), features=None):
         self.model = model
         self.working_plane_normal = np.array(working_plane_normal, dtype=float)
@@ -29,7 +36,7 @@ class ContourExtractor:
         self._features = features or []
 
     def extract(self) -> Optional[TopoDS_Shape]:
-        """Restituisce la shape 2D (ombra proiettata) sul piano z-min, o None."""
+        """Return the projected 2D shadow shape on the minimum tool-axis plane."""
         brep = self.model.brep
         if brep is None:
             logger.warning("Nessun BRep disponibile: salto estrazione contour (probabile STL)")
@@ -56,7 +63,7 @@ class ContourExtractor:
         return fused
 
     def extract_perimeter(self, shadow: TopoDS_Shape) -> List[TopoDS_Shape]:
-        """Estrae i wire liberi (perimetro) dalla shape ombra."""
+        """Extract free boundary wires from a shadow shape."""
         from OCP.ShapeAnalysis import ShapeAnalysis_FreeBounds
         from OCP.TopAbs import TopAbs_WIRE
         try:
@@ -75,6 +82,7 @@ class ContourExtractor:
     # ------------------------------------------------------------------
 
     def _collect_accessible_faces(self, brep) -> list:
+        """Collect faces that are reachable along the tool axis direction."""
         accessible = []
         exp = TopExp_Explorer(brep, TopAbs_FACE)
         while exp.More():
@@ -85,6 +93,7 @@ class ContourExtractor:
         return accessible
 
     def _face_is_accessible(self, face) -> bool:
+        """Heuristic top-accessibility check based on normal and ray obstruction."""
         try:
             face_s = TopoDS.Face_s(face)
             surf = BRepAdaptor_Surface(face_s, True)
@@ -106,11 +115,10 @@ class ContourExtractor:
             if dot < 0.05:
                 return False
 
-            # Ray cast: parte appena sopra la faccia lungo l'asse utensile
-            # Usa offset proporzionale alla profondita' della faccia rispetto a z_max
+            # Ray cast starts slightly above the face along the tool axis.
             n_arr = n
             proj = pnt.X()*n_arr[0] + pnt.Y()*n_arr[1] + pnt.Z()*n_arr[2]
-            # Offset piccolo per evitare di colpire la faccia stessa
+            # Small offset avoids immediately re-hitting the same face.
             eps = 0.05
             start = gp_Pnt(
                 pnt.X() + n_arr[0]*eps,
@@ -122,7 +130,7 @@ class ContourExtractor:
             inter.Init(self.model.brep, line, 1e-4)
             while inter.More():
                 w = inter.W()
-                if w > eps * 0.5:  # ignora intersezioni troppo vicine (stessa faccia)
+                if w > eps * 0.5:  # Ignore near-self intersections.
                     return False
                 inter.Next()
             return True
@@ -130,6 +138,7 @@ class ContourExtractor:
             return False
 
     def _make_projection_plane(self):
+        """Create a stable projection plane anchored at minimum tool-axis depth."""
         n = self.working_plane_normal
         z_min = self._min_proj_z
         ref = np.array([1.0, 0.0, 0.0])
@@ -147,6 +156,7 @@ class ContourExtractor:
         return plane_face, plane
 
     def _project_faces_to_plane(self, faces: list, plane_face, plane) -> list:
+        """Project face wires to the target plane and rebuild planar faces."""
         n = self.working_plane_normal
         plane_faces = []
         for face in faces:
@@ -170,9 +180,10 @@ class ContourExtractor:
         return plane_faces
 
     def _fuse_faces(self, plane_faces: list) -> TopoDS_Shape:
+        """Fuse projected faces; fallback to a compound when fusion is unstable."""
         if len(plane_faces) == 1:
             return plane_faces[0]
-        # Costruisce sempre un compound come base visibile
+        # Keep a compound fallback to guarantee a drawable result.
         builder = BRep_Builder()
         compound = TopoDS_Compound()
         builder.MakeCompound(compound)
@@ -192,7 +203,7 @@ class ContourExtractor:
             return compound
 
     def _cut_through_holes(self, shadow: TopoDS_Shape, plane) -> TopoDS_Shape:
-        """Sottrae i dischi dei fori passanti dalla shape ombra."""
+        """Subtract through-hole disks from the projected shadow shape."""
         from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut
         from OCP.GeomAbs import GeomAbs_Cylinder
         n = self.working_plane_normal

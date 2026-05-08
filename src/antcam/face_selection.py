@@ -2,6 +2,15 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
+"""Face indexing and selection heuristics for interactive feature editing.
+
+This module provides a lightweight service used by the viewer to:
+- build stable in-session face candidates,
+- filter candidates by top accessibility,
+- cycle candidates for user navigation,
+- validate multi-face manual hole assignments.
+"""
+
 import numpy as np
 
 from OCP.BRep import BRep_Tool
@@ -20,6 +29,17 @@ logger = logging.getLogger("antcam")
 
 @dataclass
 class FaceCandidate:
+    """Viewer-facing metadata for a selectable BRep face.
+
+    Attributes:
+        face_id: In-session integer identifier.
+        face: OCC face shape handle.
+        center: Approximate face center for geometric heuristics.
+        surface_type: Simplified surface class name.
+        accessible_from_top: True if considered reachable along tool axis.
+        neighbors: Adjacent face ids (shared-edge topology).
+        compatible_features: Manual feature types allowed on this face.
+    """
     face_id: int
     face: Any
     center: Tuple[float, float, float]
@@ -30,6 +50,7 @@ class FaceCandidate:
 
 
 class FaceSelectionService:
+    """Builds and queries face candidates used by the interactive viewer."""
     def __init__(self, model, working_plane_normal=(0.0, 0.0, 1.0)):
         self.model = model
         self.working_plane_normal = np.array(working_plane_normal, dtype=float)
@@ -42,6 +63,11 @@ class FaceSelectionService:
         self._candidates: List[FaceCandidate] = []
 
     def build_candidates(self) -> List[FaceCandidate]:
+        """Scan model BRep faces and generate selection candidates.
+
+        The method also computes edge-based adjacency and populates compatible
+        feature menus for each candidate.
+        """
         if not self.model or not getattr(self.model, "brep", None):
             return []
 
@@ -99,11 +125,13 @@ class FaceSelectionService:
         return self._candidates
 
     def get_visible_candidates(self, accessible_only: bool = True) -> List[FaceCandidate]:
+        """Return candidates currently visible under the active accessibility filter."""
         if not accessible_only:
             return list(self._candidates)
         return [c for c in self._candidates if c.accessible_from_top]
 
     def find_candidate_by_shape(self, shape, accessible_only: bool = False) -> Optional[FaceCandidate]:
+        """Resolve a detected OCC shape to a candidate entry."""
         if shape is None:
             return None
         for candidate in self.get_visible_candidates(accessible_only=accessible_only):
@@ -115,11 +143,17 @@ class FaceSelectionService:
         return None
 
     def get_candidate(self, face_id: Optional[int]) -> Optional[FaceCandidate]:
+        """Return candidate by id, or None for invalid ids."""
         if face_id is None or face_id < 0 or face_id >= len(self._candidates):
             return None
         return self._candidates[face_id]
 
     def cycle_neighbor(self, current_face_id: Optional[int], step: int = 1, accessible_only: bool = True) -> Optional[FaceCandidate]:
+        """Cycle selection using topological neighbors when possible.
+
+        If no valid neighbor remains after filtering, fallback to all visible
+        candidates to guarantee deterministic navigation.
+        """
         visible = self.get_visible_candidates(accessible_only=accessible_only)
         if not visible:
             return None
@@ -143,7 +177,7 @@ class FaceSelectionService:
         return self.get_candidate(filtered_ids[next_idx])
 
     def cycle_visible(self, current_face_id: Optional[int], step: int = 1, accessible_only: bool = True) -> Optional[FaceCandidate]:
-        """Cicla su tutte le facce visibili (non solo vicine)."""
+        """Cycle across all visible candidates, ignoring adjacency."""
         visible = self.get_visible_candidates(accessible_only=accessible_only)
         if not visible:
             return None
@@ -176,6 +210,7 @@ class FaceSelectionService:
         return "surface"
 
     def _compatible_features(self, surface_type: str, accessible: bool) -> List[str]:
+        """Map simplified surface classes to manually assignable feature types."""
         if surface_type == "plane":
             if accessible:
                 return ["pocket", "step", "opening", "chamfer"]
@@ -189,7 +224,14 @@ class FaceSelectionService:
         return []
 
     def can_assign_manual_hole(self, face_ids: List[int], accessible_only: bool = True) -> bool:
-        """True se il set selezionato puo' rappresentare un foro (pareti cilindriche/coniche coassiali)."""
+        """Validate whether selected faces can represent one manual hole.
+
+        Requirements are intentionally conservative:
+        - all faces must be cylindrical/conical walls,
+        - at least one cylinder is required,
+        - axis must be aligned with tool axis,
+        - projected XY centers and radii must be coherent.
+        """
         if len(face_ids) < 1:
             return False
 
@@ -204,7 +246,7 @@ class FaceSelectionService:
                 return False
             candidates.append(cand)
 
-        # Almeno una parete cilindrica: evita gruppi solo conici non classificabili come foro standard.
+        # At least one cylindrical wall is required for standard hole semantics.
         if not any(c.surface_type == "cylinder" for c in candidates):
             return False
 
@@ -215,7 +257,7 @@ class FaceSelectionService:
             axis, radius = self._axis_and_radius(cand.face, cand.surface_type)
             if axis is None:
                 return False
-            # Asse del foro parallelo all'asse utensile
+            # Hole axis must be approximately parallel to tool axis.
             if abs(np.dot(axis, self.working_plane_normal)) < 0.95:
                 return False
             axes.append(axis)
@@ -223,13 +265,13 @@ class FaceSelectionService:
             if radius is not None:
                 radii.append(radius)
 
-        # Coerenza posizione: i centri proiettati XY devono essere quasi coincidenti
+        # XY-projected centers must belong to the same physical hole.
         ref_center = centers_xy[0]
         for cxy in centers_xy[1:]:
             if np.linalg.norm(cxy - ref_center) > 1.0:
                 return False
 
-        # Coerenza raggio tra facce cilindriche
+        # Cylindrical radii must be mutually consistent.
         if radii:
             r0 = radii[0]
             for r in radii[1:]:
@@ -239,6 +281,7 @@ class FaceSelectionService:
         return True
 
     def _axis_and_radius(self, face, surface_type: str):
+        """Extract normalized axis and optional radius for cylinder/cone faces."""
         try:
             surf = BRepAdaptor_Surface(face, True)
             if surface_type == "cylinder":
@@ -262,6 +305,7 @@ class FaceSelectionService:
         return None, None
 
     def _face_center(self, face) -> Tuple[float, float, float]:
+        """Approximate face center using midpoint of the parametric domain."""
         try:
             surf = BRepAdaptor_Surface(face, True)
             u = (surf.FirstUParameter() + surf.LastUParameter()) / 2
@@ -272,6 +316,12 @@ class FaceSelectionService:
             return (0.0, 0.0, 0.0)
 
     def _face_is_accessible(self, face) -> bool:
+        """Heuristic top-accessibility test for 2.5D-style editing.
+
+        Planar faces are validated using normal orientation plus ray obstruction.
+        Vertical cylindrical/conical walls aligned with tool axis are accepted to
+        support manual hole and fillet wall selection.
+        """
         try:
             surf = BRepAdaptor_Surface(face, True)
             stype = surf.GetType()
@@ -297,7 +347,7 @@ class FaceSelectionService:
                 axis, _ = self._axis_and_radius(face, "cylinder" if stype == GeomAbs_Cylinder else "cone")
                 if axis is None or abs(np.dot(axis, n)) < 0.95:
                     return False
-                # Pareti foro/fillet verticali: considerate accessibili dall'alto per editing manuale.
+                # Vertical hole/fillet walls are considered selectable from top view.
                 return True
             else:
                 if np.dot(normal, n) < 0.05:

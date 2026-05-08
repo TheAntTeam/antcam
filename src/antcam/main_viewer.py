@@ -1,27 +1,40 @@
 import sys
 import logging
+from typing import Tuple
 from antcam.importer import Model
 from antcam.feature_extractor import FeatureExtractor
 from antcam.contour_extractor import ContourExtractor
 from antcam.viewer import show_model_with_features
+from antcam.path_generator import AutoToolpathPlanner
+
+"""Entry point for loading a model and opening the interactive feature viewer.
+
+This module wires together import, feature extraction, contour extraction, and
+viewer presentation. It is intentionally thin and orchestration-focused.
+"""
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("antcam")
 
 
 def run_feature_viewer(file_path, rx=0.0, ry=0.0, rz=0.0, enable_planar_merge: bool = True):
-    """Carica un modello (STEP o STL) e mostra le feature estratte.
+    """Load a CAD file, extract analysis data, and launch the viewer.
 
-    Per file STL: converte automaticamente in BRep prima dell'analisi.
+    The function supports STEP/STP and STL input. For STEP/STP, optional
+    Euler rotations can be applied before extraction. For STL, the current
+    pipeline runs in mesh mode and gracefully skips BRep-only operations
+    downstream when no BRep is available.
 
     Args:
-        file_path: percorso del file da caricare
-        rx, ry, rz: rotazioni per file STEP
-        enable_planar_merge: per STL, abilita/disabilita merging facce planari
+        file_path: Input file path.
+        rx: Rotation around X axis (degrees), STEP/STP only.
+        ry: Rotation around Y axis (degrees), STEP/STP only.
+        rz: Rotation around Z axis (degrees), STEP/STP only.
+        enable_planar_merge: Reserved compatibility flag for STL import path.
     """
     logger.info(f"Avvio estrazione feature per {file_path}")
 
-    # Determina il tipo di file dall'estensione
+    # Route import path by extension to keep STEP and STL workflows explicit.
     file_extension = file_path.lower().split('.')[-1]
 
     try:
@@ -36,6 +49,7 @@ def run_feature_viewer(file_path, rx=0.0, ry=0.0, rz=0.0, enable_planar_merge: b
         else:
             raise ValueError(f"Formato file non supportato: .{file_extension}. Usa .stl o .step/.stp")
 
+        # Hard stop if import produced neither a BRep nor a mesh.
         if not model.brep and not model.mesh:
             raise ValueError("Nessun modello valido caricato")
 
@@ -58,10 +72,23 @@ def run_feature_viewer(file_path, rx=0.0, ry=0.0, rz=0.0, enable_planar_merge: b
     for f in features:
         logger.info(f"  - {f}")
 
-    working_plane_normal = tuple(float(v) for v in extractor.working_plane_normal)
+    # Normalize to plain floats for stable downstream serialization/logging.
+    working_plane_normal: Tuple[float, float, float] = tuple(float(v) for v in extractor.working_plane_normal)
     contour_extractor = ContourExtractor(model, working_plane_normal=working_plane_normal, features=features)
     contour_shadow = contour_extractor.extract()
     perimeter = contour_extractor.extract_perimeter(contour_shadow) if contour_shadow is not None else []
+
+    planner = AutoToolpathPlanner(working_plane_normal=working_plane_normal)
+    toolpath_plan = planner.generate(features=features, perimeter_wires=perimeter)
+    drill_ops = sum(1 for op in toolpath_plan.operations if op.strategy == "drilling")
+    profile_ops = sum(1 for op in toolpath_plan.operations if op.strategy == "2p5d_profile")
+    logger.info(
+        "Toolpath plan: operazioni=%d (drilling=%d, profile=%d) warning=%d",
+        len(toolpath_plan.operations),
+        drill_ops,
+        profile_ops,
+        len(toolpath_plan.warnings),
+    )
 
     show_model_with_features(model, features,
                              working_plane_normal=working_plane_normal,
@@ -81,7 +108,7 @@ MODELS = [
 ]
 
 if __name__ == "__main__":
-    path, rx, ry, rz = MODELS[0]
+    path, rx, ry, rz = MODELS[2]
     if len(sys.argv) > 1:
         path = sys.argv[1]
     run_feature_viewer(path, rx=rx, ry=ry, rz=rz)
