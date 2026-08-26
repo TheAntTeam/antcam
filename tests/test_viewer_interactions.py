@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 import antcam.viewer as viewer_module
 from antcam.viewer import AntCamViewerWindow
 
@@ -41,6 +43,10 @@ def _build_window_for_logic_tests():
     win = AntCamViewerWindow.__new__(AntCamViewerWindow)
     win._accessible_only = True
     win._selected_face_id = None
+    win._toolpath_mode_cycle = ("all", "drilling", "roughing", "finishing")
+    win._toolpath_mode_filter = "all"
+    win._toolpath_plan = None
+    win._toolpath_ais = []
     status = _FakeStatusBar()
     win.statusBar = lambda: status
     return win, status
@@ -195,5 +201,155 @@ def test_context_menu_without_selection_shows_reset_actions(monkeypatch):
     assert "Rimuovi tutte le assegnazioni manuali" in labels
     assert fake_menu.exec_pos == (10, 20)
     assert called == {"clear": 0, "deselect_all": 0, "clear_all": 0}
+
+
+def test_split_toolpath_motion_paths_hides_linking_moves_and_keeps_cut_start():
+    win, _ = _build_window_for_logic_tests()
+
+    motions = [
+        SimpleNamespace(move="rapid", point=(0.0, 0.0, 5.0)),
+        SimpleNamespace(move="linear", point=(0.0, 0.0, 0.0), feed=120.0),
+        SimpleNamespace(move="linear", point=(3.0, 0.0, 0.0), feed=300.0),
+        SimpleNamespace(move="rapid", point=(6.0, 0.0, 5.0)),
+        SimpleNamespace(move="linear", point=(6.0, 0.0, 0.0), feed=120.0),
+        SimpleNamespace(move="linear", point=(6.0, 4.0, 0.0), feed=300.0),
+    ]
+
+    paths = win._split_toolpath_motion_paths(motions, cut_feed=300.0)
+
+    assert len(paths) == 2
+    assert tuple(float(v) for v in paths[0][0]) == pytest.approx((0.0, 0.0, 0.0))
+    assert tuple(float(v) for v in paths[0][-1]) == pytest.approx((3.0, 0.0, 0.0))
+    assert tuple(float(v) for v in paths[1][0]) == pytest.approx((6.0, 0.0, 0.0))
+    assert tuple(float(v) for v in paths[1][-1]) == pytest.approx((6.0, 4.0, 0.0))
+
+
+def test_split_toolpath_motion_paths_accepts_rounded_cut_feed_metadata():
+    win, _ = _build_window_for_logic_tests()
+
+    motions = [
+        SimpleNamespace(move="rapid", point=(0.0, 0.0, 5.0)),
+        SimpleNamespace(move="linear", point=(0.0, 0.0, 0.0), feed=102.367412),
+        SimpleNamespace(move="linear", point=(5.0, 0.0, 0.0), feed=286.479754),
+        SimpleNamespace(move="linear", point=(5.0, 5.0, 0.0), feed=286.479754),
+    ]
+
+    paths = win._split_toolpath_motion_paths(motions, cut_feed=286.4798)
+
+    assert len(paths) == 1
+    assert tuple(float(v) for v in paths[0][0]) == pytest.approx((0.0, 0.0, 0.0))
+    assert tuple(float(v) for v in paths[0][-1]) == pytest.approx((5.0, 5.0, 0.0))
+
+
+def test_display_toolpath_plan_uses_mode_specific_styles():
+    win, _ = _build_window_for_logic_tests()
+
+    displayed = []
+
+    class _ToolpathWidget:
+        def display_wire(self, shape, color=(1.0, 1.0, 1.0), width=1.0, selectable=False):
+            displayed.append({
+                "shape": shape,
+                "color": color,
+                "width": width,
+                "selectable": selectable,
+            })
+            return shape
+
+        def remove_interactive(self, overlay):
+            displayed.append({"removed": overlay})
+
+    roughing = SimpleNamespace(strategy="slot_milling", metadata={"operation_mode": "roughing"}, motions=[])
+    finishing = SimpleNamespace(strategy="cavity_clearing", metadata={"operation_mode": "finishing"}, motions=[])
+    drilling = SimpleNamespace(strategy="drilling", metadata={"operation_mode": "drilling"}, motions=[])
+
+    win.ocp_widget = _ToolpathWidget()
+    win._toolpath_plan = SimpleNamespace(operations=[roughing, finishing, drilling])
+    win._toolpath_ais = []
+    win._build_operation_display_shapes = lambda operation: [f"shape_{operation.strategy}_{operation.metadata['operation_mode']}"]
+
+    win._display_toolpath_plan()
+
+    assert displayed == [
+        {"shape": "shape_slot_milling_roughing", "color": (0.1, 0.45, 1.0), "width": 3.2, "selectable": False},
+        {"shape": "shape_cavity_clearing_finishing", "color": (0.15, 1.0, 0.35), "width": 2.4, "selectable": False},
+        {"shape": "shape_drilling_drilling", "color": (1.0, 0.2, 1.0), "width": 2.6, "selectable": False},
+    ]
+
+
+def test_display_toolpath_plan_can_filter_single_mode():
+    win, _ = _build_window_for_logic_tests()
+
+    displayed = []
+
+    class _ToolpathWidget:
+        def display_wire(self, shape, color=(1.0, 1.0, 1.0), width=1.0, selectable=False):
+            displayed.append({
+                "shape": shape,
+                "color": color,
+                "width": width,
+                "selectable": selectable,
+            })
+            return shape
+
+        def remove_interactive(self, overlay):
+            displayed.append({"removed": overlay})
+
+    roughing = SimpleNamespace(strategy="cavity_clearing", metadata={"operation_mode": "roughing"}, motions=[])
+    finishing = SimpleNamespace(strategy="slot_milling", metadata={"operation_mode": "finishing"}, motions=[])
+    drilling = SimpleNamespace(strategy="drilling", metadata={"operation_mode": "drilling"}, motions=[])
+
+    win.ocp_widget = _ToolpathWidget()
+    win._toolpath_plan = SimpleNamespace(operations=[roughing, finishing, drilling])
+    win._toolpath_mode_filter = "roughing"
+    win._build_operation_display_shapes = lambda operation: [f"shape_{operation.strategy}_{operation.metadata['operation_mode']}"]
+
+    win._display_toolpath_plan()
+
+    assert displayed == [
+        {"shape": "shape_cavity_clearing_roughing", "color": (1.0, 0.6, 0.0), "width": 3.3, "selectable": False},
+    ]
+
+
+def test_toolpath_legend_html_lists_distinct_strategy_colors():
+    win, _ = _build_window_for_logic_tests()
+
+    legend_html = win._toolpath_legend_html()
+
+    assert "drill" in legend_html
+    assert "slot rough" in legend_html
+    assert "slot finish" in legend_html
+    assert "cavity rough" in legend_html
+    assert "cavity finish" in legend_html
+    assert "profile rough" in legend_html
+    assert "profile finish" in legend_html
+
+
+def test_cycle_toolpath_filter_updates_mode_and_status():
+    win, status = _build_window_for_logic_tests()
+    win._toolpath_plan = SimpleNamespace(operations=[SimpleNamespace(metadata={"operation_mode": "roughing"})])
+
+    rendered_modes = []
+    win._display_toolpath_plan = lambda: rendered_modes.append(win._toolpath_mode_filter)
+
+    win._cycle_toolpath_filter(1)
+    assert win._toolpath_mode_filter == "drilling"
+    assert rendered_modes[-1] == "drilling"
+    assert "Visualizzazione toolpath: solo drilling" in status.messages[-1]
+
+    win._cycle_toolpath_filter(1)
+    assert win._toolpath_mode_filter == "roughing"
+
+    win._cycle_toolpath_filter(-1)
+    assert win._toolpath_mode_filter == "drilling"
+
+
+def test_cycle_toolpath_filter_reports_missing_toolpath():
+    win, status = _build_window_for_logic_tests()
+    win._toolpath_plan = SimpleNamespace(operations=[])
+
+    win._cycle_toolpath_filter(1)
+
+    assert status.messages[-1] == "Nessun toolpath disponibile da filtrare"
 
 

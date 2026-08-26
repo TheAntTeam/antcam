@@ -1,0 +1,343 @@
+{
+  "generic": {
+    "profile_id": "generic",
+    "name": "Generic baseline",
+    "surface_speed_m_per_min": 120.0,
+    "chip_load": 0.02,
+    "plunge_ratio": 0.35,
+    "stepdown_ratio": 0.5,
+    "lead_ratio": 0.25,
+    "material_factor": 1.0,
+    "automatic_mode_overrides": {
+      "drilling": {
+        "chip_load": 0.015,
+        "stepdown_ratio": 1.5
+      },
+      "roughing": {
+        "chip_load": 0.022,
+        "stepdown_ratio": 0.65,
+        "stepover_ratio": 0.45,
+        "lead_ratio": 0.2
+      },
+      "finishing": {
+        "chip_load": 0.014,
+        "plunge_ratio": 0.25,
+        "stepdown_ratio": 0.2,
+        "stepover_ratio": 0.12,
+        "lead_ratio": 0.08
+      }
+    },
+    "automatic_strategy_mode_overrides": {
+      "slot_milling": {
+        "roughing": {
+          "chip_load": 0.025,
+          "stepdown_ratio": 0.6,
+          "lead_ratio": 0.16
+        },
+        "finishing": {
+          "chip_load": 0.013,
+          "plunge_ratio": 0.22,
+          "stepdown_ratio": 0.18,
+          "lead_ratio": 0.04
+        }
+      },
+      "cavity_clearing": {
+        "roughing": {
+          "chip_load": 0.024,
+          "stepdown_ratio": 0.62,
+          "stepover_ratio": 0.42,
+          "lead_ratio": 0.24
+        },
+        "finishing": {
+          "chip_load": 0.012,
+          "plunge_ratio": 0.22,
+          "stepdown_ratio": 0.16,
+          "stepover_ratio": 0.1,
+          "lead_ratio": 0.05
+        }
+      },
+      "2p5d_profile": {
+        "roughing": {
+          "chip_load": 0.024,
+          "stepdown_ratio": 0.7,
+          "stepover_ratio": 0.4,
+          "lead_ratio": 0.12
+        },
+        "finishing": {
+          "chip_load": 0.012,
+          "plunge_ratio": 0.22,
+          "stepdown_ratio": 0.14,
+          "stepover_ratio": 0.08,
+          "lead_ratio": 0.03
+        }
+      }
+    }
+  },
+  "aluminum": {
+    "profile_id": "aluminum",
+    "name": "General aluminum",
+    "surface_speed_m_per_min": 250.0,
+    "chip_load": 0.04,
+    "plunge_ratio": 0.45,
+    "stepdown_ratio": 0.7,
+    "lead_ratio": 0.35,
+    "material_factor": 1.1,
+    "automatic_mode_overrides": {
+      "drilling": {
+        "surface_speed_m_per_min": 180.0,
+        "chip_load": 0.02,
+        "stepdown_ratio": 2.0
+      },
+      "roughing": {
+        "chip_load": 0.045,
+        "stepdown_ratio": 0.75,
+        "stepover_ratio": 0.5,
+        "lead_ratio": 0.2
+      },
+      "finishing": {
+        "chip_load": 0.03,
+        "plunge_ratio": 0.3,
+        "stepdown_ratio": 0.18,
+        "stepover_ratio": 0.1,
+        "lead_ratio": 0.05
+      }
+    },
+    "automatic_strategy_overrides": {
+      "drilling": {
+        "surface_speed_m_per_min": 180.0,
+        "chip_load": 0.02,
+        "stepdown_ratio": 2.0
+      },
+      "slot_milling": {
+        "chip_load": 0.03,
+        "stepdown_ratio": 0.45,
+        "lead_ratio": 0.18
+      },
+      "cavity_clearing": {
+        "stepover_ratio": 0.45,
+        "stepdown_ratio": 0.55,
+        "lead_ratio": 0.28
+      }
+    },
+    "automatic_strategy_mode_overrides": {
+      "slot_milling": {
+        "roughing": {
+          "chip_load": 0.034,
+          "stepdown_ratio": 0.5,
+          "lead_ratio": 0.16
+        },
+        "finishing": {
+          "chip_load": 0.022,
+          "plunge_ratio": 0.24,
+          "stepdown_ratio": 0.14,
+          "lead_ratio": 0.04
+        }
+      },
+      "cavity_clearing": {
+        "roughing": {
+          "chip_load": 0.042,
+          "stepdown_ratio": 0.6,
+          "stepover_ratio": 0.48,
+          "lead_ratio": 0.24
+        },
+        "finishing": {
+          "chip_load": 0.026,
+          "plunge_ratio": 0.24,
+          "stepdown_ratio": 0.16,
+          "stepover_ratio": 0.08,
+          "lead_ratio": 0.04
+        }
+      },
+      "2p5d_profile": {
+        "roughing": {
+          "chip_load": 0.048,
+          "stepdown_ratio": 0.85,
+          "stepover_ratio": 0.42,
+          "lead_ratio": 0.12
+        },
+        "finishing": {
+          "chip_load": 0.028,
+          "plunge_ratio": 0.26,
+          "stepdown_ratio": 0.16,
+          "stepover_ratio": 0.07,
+          "lead_ratio": 0.035
+        }
+      }
+    },
+    "automatic_feature_overrides": {
+      "pocket": {
+        "stepover_ratio": 0.35
+      },
+      "opening": {
+        "lead_ratio": 0.08
+      }
+    }
+  },
+  "steel": {
+    "profile_id": "steel",
+    "name": "General steel",
+    "surface_speed_m_per_min": 90.0,
+    "chip_load": 0.015,
+    "plunge_ratio": 0.3,
+    "stepdown_ratio": 0.35,
+    "lead_ratio": 0.2,
+    "material_factor": 0.85,
+    "automatic_mode_overrides": {
+      "drilling": {
+        "surface_speed_m_per_min": 75.0,
+        "chip_load": 0.01,
+        "stepdown_ratio": 1.25
+      },
+      "roughing": {
+        "chip_load": 0.012,
+        "stepdown_ratio": 0.3,
+        "stepover_ratio": 0.25,
+        "lead_ratio": 0.12
+      },
+      "finishing": {
+        "chip_load": 0.008,
+        "plunge_ratio": 0.22,
+        "stepdown_ratio": 0.12,
+        "stepover_ratio": 0.08,
+        "lead_ratio": 0.04
+      }
+    },
+    "automatic_strategy_overrides": {
+      "drilling": {
+        "surface_speed_m_per_min": 75.0,
+        "chip_load": 0.01,
+        "stepdown_ratio": 1.25
+      },
+      "cavity_clearing": {
+        "stepover_ratio": 0.3,
+        "stepdown_ratio": 0.25,
+        "lead_ratio": 0.12
+      }
+    },
+    "automatic_strategy_mode_overrides": {
+      "slot_milling": {
+        "roughing": {
+          "chip_load": 0.01,
+          "stepdown_ratio": 0.22,
+          "lead_ratio": 0.08
+        },
+        "finishing": {
+          "chip_load": 0.0065,
+          "plunge_ratio": 0.18,
+          "stepdown_ratio": 0.09,
+          "lead_ratio": 0.02
+        }
+      },
+      "cavity_clearing": {
+        "roughing": {
+          "chip_load": 0.011,
+          "stepdown_ratio": 0.24,
+          "stepover_ratio": 0.24,
+          "lead_ratio": 0.1
+        },
+        "finishing": {
+          "chip_load": 0.006,
+          "plunge_ratio": 0.18,
+          "stepdown_ratio": 0.08,
+          "stepover_ratio": 0.05,
+          "lead_ratio": 0.02
+        }
+      },
+      "2p5d_profile": {
+        "roughing": {
+          "chip_load": 0.011,
+          "stepdown_ratio": 0.28,
+          "stepover_ratio": 0.18,
+          "lead_ratio": 0.08
+        },
+        "finishing": {
+          "chip_load": 0.007,
+          "plunge_ratio": 0.2,
+          "stepdown_ratio": 0.1,
+          "stepover_ratio": 0.05,
+          "lead_ratio": 0.025
+        }
+      }
+    }
+  },
+  "plastic": {
+    "profile_id": "plastic",
+    "name": "General plastic",
+    "surface_speed_m_per_min": 180.0,
+    "chip_load": 0.03,
+    "plunge_ratio": 0.5,
+    "stepdown_ratio": 0.8,
+    "lead_ratio": 0.3,
+    "material_factor": 0.95,
+    "automatic_mode_overrides": {
+      "drilling": {
+        "chip_load": 0.02,
+        "stepdown_ratio": 1.8
+      },
+      "roughing": {
+        "chip_load": 0.035,
+        "stepdown_ratio": 0.95,
+        "stepover_ratio": 0.6,
+        "lead_ratio": 0.2
+      },
+      "finishing": {
+        "chip_load": 0.022,
+        "plunge_ratio": 0.35,
+        "stepdown_ratio": 0.25,
+        "stepover_ratio": 0.15,
+        "lead_ratio": 0.06
+      }
+    },
+    "automatic_strategy_overrides": {
+      "cavity_clearing": {
+        "stepover_ratio": 0.55,
+        "stepdown_ratio": 0.9
+      }
+    },
+    "automatic_strategy_mode_overrides": {
+      "slot_milling": {
+        "roughing": {
+          "chip_load": 0.038,
+          "stepdown_ratio": 0.92,
+          "lead_ratio": 0.18
+        },
+        "finishing": {
+          "chip_load": 0.019,
+          "plunge_ratio": 0.3,
+          "stepdown_ratio": 0.18,
+          "lead_ratio": 0.04
+        }
+      },
+      "cavity_clearing": {
+        "roughing": {
+          "chip_load": 0.034,
+          "stepdown_ratio": 0.95,
+          "stepover_ratio": 0.58,
+          "lead_ratio": 0.22
+        },
+        "finishing": {
+          "chip_load": 0.018,
+          "plunge_ratio": 0.3,
+          "stepdown_ratio": 0.18,
+          "stepover_ratio": 0.12,
+          "lead_ratio": 0.04
+        }
+      },
+      "2p5d_profile": {
+        "roughing": {
+          "chip_load": 0.036,
+          "stepdown_ratio": 1.0,
+          "stepover_ratio": 0.5,
+          "lead_ratio": 0.16
+        },
+        "finishing": {
+          "chip_load": 0.02,
+          "plunge_ratio": 0.32,
+          "stepdown_ratio": 0.2,
+          "stepover_ratio": 0.1,
+          "lead_ratio": 0.04
+        }
+      }
+    }
+  }
+}

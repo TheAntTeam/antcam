@@ -53,3 +53,33 @@ site/
 .idea/
 .vscode/
 /appunti/
+
+# Build artifacts
+dist_check/
+antcam_demo/
+*.whl
+
+# Logs and debug output
+*.log
+gl_*.png
+gl_*.log
+gl_check.png
+
+# Generated files
+plan.json
+run_*.py
+
+# Demo/build dirs
+antcam_demo/
+dist_check/
+docs/rc1/
+project/
+
+# Large test data
+tests/data/*.stl
+tests/data/*.step
+src/antcam_rc2/tests/data/*.stl
+src/antcam_rc2/tests/data/*.step
+
+# Generated docs
+docs/section-offset-algorithm.md

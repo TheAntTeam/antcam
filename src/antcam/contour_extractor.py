@@ -14,6 +14,7 @@ from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_REVERSED, TopAbs_WIRE
 from OCP.BRepAdaptor import BRepAdaptor_Surface
 from OCP.BRepIntCurveSurface import BRepIntCurveSurface_Inter
 from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace, BRepBuilderAPI_MakeEdge, BRepBuilderAPI_MakeWire
+from OCP.BRepTools import BRepTools
 from OCP.BRepAlgoAPI import BRepAlgoAPI_Fuse
 from OCP.BRepBndLib import BRepBndLib
 from OCP.Bnd import Bnd_Box
@@ -160,23 +161,48 @@ class ContourExtractor:
         n = self.working_plane_normal
         plane_faces = []
         for face in faces:
+            projected_outer = None
+            projected_inner_wires = []
+            outer_wire = None
+            try:
+                outer_wire = BRepTools.OuterWire_s(TopoDS.Face_s(face))
+            except Exception:
+                outer_wire = None
+
             exp_w = TopExp_Explorer(face, TopAbs_WIRE)
             while exp_w.More():
-                wire = exp_w.Current()
+                wire = TopoDS.Wire_s(exp_w.Current())
                 try:
                     proj = BRepProj_Projection(
-                        TopoDS.Wire_s(wire),
+                        wire,
                         plane_face,
                         gp_Dir(n[0], n[1], n[2])
                     )
                     if proj.More():
-                        proj_wire = proj.Current()
-                        face_2d = BRepBuilderAPI_MakeFace(plane, TopoDS.Wire_s(proj_wire))
-                        if face_2d.IsDone():
-                            plane_faces.append(face_2d.Face())
+                        proj_wire = TopoDS.Wire_s(proj.Current())
+                        if outer_wire is not None and outer_wire.IsSame(wire):
+                            projected_outer = proj_wire
+                        else:
+                            projected_inner_wires.append(proj_wire)
                 except Exception:
                     pass
                 exp_w.Next()
+
+            if projected_outer is None:
+                if not projected_inner_wires:
+                    continue
+                projected_outer = projected_inner_wires[0]
+                projected_inner_wires = projected_inner_wires[1:]
+
+            try:
+                face_2d = BRepBuilderAPI_MakeFace(plane, projected_outer)
+                if not face_2d.IsDone():
+                    continue
+                for inner_wire in projected_inner_wires:
+                    face_2d.Add(inner_wire)
+                plane_faces.append(face_2d.Face())
+            except Exception:
+                pass
         return plane_faces
 
     def _fuse_faces(self, plane_faces: list) -> TopoDS_Shape:

@@ -1,15 +1,14 @@
-from OCP.STEPControl import STEPControl_Reader
-from OCP.IFSelect import IFSelect_RetDone, IFSelect_ItemsByEntity
-from OCP.BRepBuilderAPI import BRepBuilderAPI_Transform, BRepBuilderAPI_Sewing, BRepBuilderAPI_MakePolygon, BRepBuilderAPI_MakeFace
-from OCP.gp import gp_Trsf, gp_Ax1, gp_Pnt, gp_Dir, gp_EulerSequence, gp_Ax2
-from OCP.ShapeUpgrade import ShapeUpgrade_UnifySameDomain
-from OCP.TopExp import TopExp_Explorer
-from OCP.TopAbs import TopAbs_FACE
-from OCP.BRepLib import BRepLib
 import math
+
+from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace, BRepBuilderAPI_MakePolygon, BRepBuilderAPI_Transform
+from OCP.BRepLib import BRepLib
+from OCP.IFSelect import IFSelect_RetDone
+from OCP.ShapeUpgrade import ShapeUpgrade_UnifySameDomain
+from OCP.STEPControl import STEPControl_Reader
+from OCP.gp import gp_Ax1, gp_Dir, gp_Pnt, gp_Trsf
 import trimesh
 import trimesh.repair
-import numpy as np
+
 from antcam.logger import setup_logger
 
 """Model import utilities for STEP and STL sources.
@@ -46,7 +45,7 @@ def import_step(path: str):
     reader = STEPControl_Reader()
     status = reader.ReadFile(path)
     if status != IFSelect_RetDone:
-        raise ValueError(f"Errore lettura STEP: {path}")
+        raise ValueError(f"Failed to read STEP file: {path}")
     reader.TransferRoots()
     return reader.OneShape()
 
@@ -62,7 +61,7 @@ def import_stl(path: str, auto_fix=True):
 
 def fix_stl(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
     """Apply basic mesh cleanup (normals, winding, holes, orphan vertices)."""
-    logger.info("Fix STL running...")
+    logger.info("Running STL mesh cleanup")
     trimesh.repair.fix_normals(mesh)
     trimesh.repair.fill_holes(mesh)
     trimesh.repair.fix_winding(mesh)
@@ -91,11 +90,11 @@ def mesh_to_brep(mesh: trimesh.Trimesh):
     optional domain unification attempt.
     """
     from OCP.BRepBuilderAPI import BRepBuilderAPI_Sewing
-    logger.info(f"mesh_to_brep: {len(mesh.faces)} triangoli")
+    logger.info("mesh_to_brep: building BRep from %d triangles", len(mesh.faces))
     # 1) Build candidate faces from mesh triangles.
     all_faces = _merge_planar_faces(mesh)
     if not all_faces:
-        logger.warning("Merging planare fallito o non applicabile, uso triangoli originali")
+        logger.warning("Planar face merging unavailable, falling back to raw triangles")
         # Fallback: rebuild using direct triangle conversion.
         from OCP.BRepBuilderAPI import BRepBuilderAPI_MakePolygon, BRepBuilderAPI_MakeFace
         for face in mesh.faces:
@@ -105,7 +104,8 @@ def mesh_to_brep(mesh: trimesh.Trimesh):
                 f = BRepBuilderAPI_MakeFace(poly.Wire(), True)
                 if f.IsDone():
                     all_faces.append(f.Face())
-            except: pass
+            except Exception:
+                pass
     # 2) Sew faces into a single shell-like shape.
     sewing = BRepBuilderAPI_Sewing(1e-2)
     for f in all_faces:
@@ -113,14 +113,14 @@ def mesh_to_brep(mesh: trimesh.Trimesh):
     sewing.Perform()
     sewn = sewing.SewedShape()
     # 3) Try same-domain unification to simplify contiguous regions.
-    logger.info("mesh_to_brep: unificazione facce (UnifySameDomain)...")
+    logger.info("mesh_to_brep: running UnifySameDomain simplification")
     try:
         unify = ShapeUpgrade_UnifySameDomain(sewn, True, True, True)
         unify.Build()
         result = unify.Shape()
         BRepLib.BuildCurves3d_s(result)
     except Exception as e:
-        logger.warning(f"Semplificazione fallita: {e}")
+        logger.warning(f"BRep simplification failed: {e}")
         result = sewn
 
     return result
@@ -128,24 +128,30 @@ def mesh_to_brep(mesh: trimesh.Trimesh):
 class Model:
     """Container for imported geometry (BRep and/or mesh)."""
     def __init__(self, brep=None, mesh=None):
-        self.brep = brep; self.mesh = mesh
+        self.brep = brep
+        self.mesh = mesh
 
     @classmethod
     def from_step(cls, path, rx=0.0, ry=0.0, rz=0.0):
         """Create a model from STEP, applying optional rotations."""
         brep = import_step(path)
-        if any([rx, ry, rz]): brep = apply_rotation(brep, rx, ry, rz)
+        if any([rx, ry, rz]):
+            brep = apply_rotation(brep, rx, ry, rz)
         return cls(brep=brep)
 
     @classmethod
-    def from_stl(cls, path, convert_to_brep=True):
-        """Create a model from STL in mesh-first mode.
+    def from_stl(cls, path, convert_to_brep: bool = False):
+        """Create a model from STL using the production mesh-first workflow.
 
-        The ``convert_to_brep`` argument is currently retained for API
-        compatibility. STL import returns mesh-only to keep the workflow robust.
+        ``convert_to_brep`` remains available only as an explicit experimental
+        flag. The supported STL path keeps the source mesh and does not attempt
+        semantic BRep reconstruction.
         """
         mesh = import_stl(path)
-        # BRep conversion intentionally disabled in the default STL path.
+        if convert_to_brep:
+            logger.warning(
+                "Experimental mesh-to-BRep conversion is not enabled in the production STL path; returning mesh-only model"
+            )
         return cls(mesh=mesh)
 
 def validate_stl(mesh):

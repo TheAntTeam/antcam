@@ -4,7 +4,7 @@ import ctypes
 import math
 from typing import Dict, List, Optional
 
-from PySide6.QtWidgets import QMainWindow, QWidget, QApplication, QMenu
+from PySide6.QtWidgets import QMainWindow, QWidget, QApplication, QMenu, QLabel
 from PySide6.QtCore import Qt, QTimer, QPoint, Signal
 
 from OCP.AIS import AIS_InteractiveContext, AIS_Shape, AIS_Trihedron
@@ -48,6 +48,7 @@ class QOCPWidget(QWidget):
     deselect_all_faces_requested = Signal()
     clear_all_requested = Signal()
     toggle_accessible_filter_requested = Signal()
+    cycle_toolpath_filter_requested = Signal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -74,12 +75,17 @@ class QOCPWidget(QWidget):
         self._redraw_timer.timeout.connect(self._periodic_redraw)
         self._redraw_timer.start(30)  # ~33 FPS per ridurre lo sfarfallio
 
+    def paintEngine(self):
+        return None
+
     def _init_ocp(self):
         if self._is_initialized: return
         try:
             display_connection = Aspect_DisplayConnection()
             graphic_driver = OpenGl_GraphicDriver(display_connection)
             viewer = V3d_Viewer(graphic_driver)
+            viewer.SetDefaultLights()
+            viewer.SetLightOn()
             self.view = viewer.CreateView()
             self.context = AIS_InteractiveContext(viewer)
 
@@ -256,6 +262,10 @@ class QOCPWidget(QWidget):
             self.deselect_all_faces_requested.emit()
             event.accept()
             return
+        if event.key() == Qt.Key_T:
+            self.cycle_toolpath_filter_requested.emit(-1 if (event.modifiers() & Qt.ShiftModifier) else 1)
+            event.accept()
+            return
         if event.key() == Qt.Key_R and (event.modifiers() & Qt.ControlModifier):
             self.clear_all_requested.emit()
             event.accept()
@@ -264,10 +274,16 @@ class QOCPWidget(QWidget):
 
     def display_shape(self, shape: TopoDS_Shape, color=(0.7, 0.7, 0.7), transparency=0.0, selectable=False):
         if not self._is_initialized: self._init_ocp()
+        from OCP.BRepMesh import BRepMesh_IncrementalMesh
+        BRepMesh_IncrementalMesh(shape, 0.1)
         ais_shape = AIS_Shape(shape)
         q_color = Quantity_Color(color[0], color[1], color[2], Quantity_TOC_RGB)
         ais_shape.SetColor(q_color)
+        ais_shape.SetDisplayMode(1)
         if transparency > 0: ais_shape.SetTransparency(transparency)
+        from OCP.Graphic3d import Graphic3d_MaterialAspect, Graphic3d_NOM_PLASTIC
+        mat = Graphic3d_MaterialAspect(Graphic3d_NOM_PLASTIC)
+        ais_shape.SetMaterial(mat)
         self.context.Display(ais_shape, True)
         if not selectable:
             self.context.Deactivate(ais_shape)
@@ -284,10 +300,10 @@ class QOCPWidget(QWidget):
         q_color = Quantity_Color(color[0], color[1], color[2], Quantity_TOC_RGB)
         ais_shape.SetColor(q_color)
         mat = Graphic3d_MaterialAspect(Graphic3d_NOM_PLASTIC)
-        mat.SetTransparency(transparency)
         ais_shape.SetMaterial(mat)
         ais_shape.SetDisplayMode(1)
-        ais_shape.SetTransparency(transparency)
+        if transparency > 0.0:
+            ais_shape.SetTransparency(transparency)
         self.context.Display(ais_shape, True)
         if not selectable:
             self.context.Deactivate(ais_shape)
@@ -300,6 +316,7 @@ class QOCPWidget(QWidget):
         ais_shape = AIS_Shape(shape)
         q_color = Quantity_Color(color[0], color[1], color[2], Quantity_TOC_RGB)
         ais_shape.SetColor(q_color)
+        ais_shape.SetDisplayMode(0)
         ais_shape.SetWidth(width)
         self.context.Display(ais_shape, True)
         if not selectable:
@@ -309,8 +326,23 @@ class QOCPWidget(QWidget):
 
 class AntCamViewerWindow(QMainWindow):
     """Main interactive window used to inspect and manually tag STEP features."""
-    def __init__(self, model, features: List, working_plane_normal=(0.0, 0.0, 1.0),
-                 contour_shadow=None, perimeter=None, vertical_arc_groups=None):
+    def __init__(
+        self,
+        model,
+        features: List,
+        working_plane_normal=(0.0, 0.0, 1.0),
+        contour_shadow=None,
+        perimeter=None,
+        vertical_arc_groups=None,
+        toolpath_plan=None,
+        *,
+        enable_face_selection: bool = True,
+        show_toolpath_legend: bool = True,
+        show_model_edges: bool = False,
+        model_edge_color=(0.18, 0.18, 0.18),
+        model_edge_width: float = 1.5,
+        status_message: Optional[str] = None,
+    ):
         super().__init__()
         self.setWindowTitle("AntCAM Interactive Viewer")
         self.resize(1200, 850)
@@ -322,9 +354,23 @@ class AntCamViewerWindow(QMainWindow):
         self._contour_shadow = contour_shadow
         self._perimeter = perimeter or []
         self._vertical_arc_groups = vertical_arc_groups or []
+        self._toolpath_plan = toolpath_plan
+        self._enable_face_selection = bool(enable_face_selection)
+        self._show_toolpath_legend = bool(show_toolpath_legend)
+        self._show_model_edges = bool(show_model_edges)
+        self._model_edge_color = tuple(float(v) for v in model_edge_color)
+        self._model_edge_width = float(model_edge_width)
+        self._toolpath_mode_cycle = ("all", "drilling", "roughing", "finishing")
+        self._toolpath_mode_filter = "all"
+        self._toolpath_legend_label = QLabel(self._toolpath_legend_html())
+        self._default_status_message = status_message or (
+            "Viewer pronto | Esc deseleziona corrente | D deseleziona tutte le facce | T cicla toolpath | Ctrl+R reset manuali"
+        )
         self._selection_service: Optional[FaceSelectionService] = None
         self._accessible_only = True
         self._body_ais = None
+        self._body_edge_ais = None
+        self._toolpath_ais: List[object] = []
         self._selected_face_id: Optional[int] = None
         self._selected_face_ais = None
         self._selected_face_ids = set()
@@ -338,7 +384,10 @@ class AntCamViewerWindow(QMainWindow):
         self.ocp_widget.deselect_all_faces_requested.connect(self._deselect_all_faces)
         self.ocp_widget.clear_all_requested.connect(self._clear_all_manual_assignments)
         self.ocp_widget.toggle_accessible_filter_requested.connect(self._toggle_accessible_filter)
-        self.statusBar().showMessage("Viewer pronto | Esc deseleziona corrente | D deseleziona tutte le facce | Ctrl+R reset manuali")
+        self.ocp_widget.cycle_toolpath_filter_requested.connect(self._cycle_toolpath_filter)
+        if self._show_toolpath_legend:
+            self.statusBar().addPermanentWidget(self._toolpath_legend_label, 1)
+        self.statusBar().showMessage(self._default_status_message)
         QTimer.singleShot(500, self._load_data)
 
     def _load_data(self):
@@ -369,6 +418,13 @@ class AntCamViewerWindow(QMainWindow):
             transparency=0.0,
             selectable=bool(self.model and self.model.brep),
         )
+        if self._show_model_edges:
+            self._body_edge_ais = self.ocp_widget.display_wire(
+                shape_to_display,
+                color=self._model_edge_color,
+                width=self._model_edge_width,
+                selectable=False,
+            )
         colors = {
             "hole_group": (1.0, 0.0, 0.0),       # rosso
             "countersunk_hole": (1.0, 0.3, 0.0),  # rosso-arancio
@@ -407,7 +463,7 @@ class AntCamViewerWindow(QMainWindow):
                         continue
                 self.ocp_widget.display_shape(feat.geometry, color=color, selectable=False)
 
-        if self.model and self.model.brep and self._body_ais is not None:
+        if self._enable_face_selection and self.model and self.model.brep and self._body_ais is not None:
             self._selection_service = FaceSelectionService(self.model, tuple(self.working_plane_normal))
             self._selection_service.build_candidates()
             self.ocp_widget.enable_face_selection(self._body_ais)
@@ -435,6 +491,7 @@ class AntCamViewerWindow(QMainWindow):
         # Visualizza perimetro ombra in arancio pieno
         for wire in self._perimeter:
             self.ocp_widget.display_wire(wire, color=(1.0, 0.5, 0.0), width=2.0, selectable=False)
+        self._display_toolpath_plan()
         self.ocp_widget.view.Redraw()
 
     def _update_filter_status(self):
@@ -442,8 +499,9 @@ class AntCamViewerWindow(QMainWindow):
             return
         visible = self._selection_service.get_visible_candidates(self._accessible_only)
         mode = "solo accessibili dall'alto" if self._accessible_only else "tutte le facce"
+        toolpath_mode = self._toolpath_filter_label()
         self.statusBar().showMessage(
-            f"Edit feature: {mode} | {len(visible)} facce candidate | click seleziona, Ctrl+click multi-selezione, Shift+rotella cicla sotto cursore, D deseleziona tutte"
+            f"Edit feature: {mode} | toolpath={toolpath_mode} | {len(visible)} facce candidate | click seleziona, Ctrl+click multi-selezione, Shift+rotella cicla sotto cursore, D deseleziona tutte"
         )
 
     def _clear_face_selection(self):
@@ -487,6 +545,20 @@ class AntCamViewerWindow(QMainWindow):
             if candidate and not (candidate.accessible_from_top or not self._accessible_only):
                 self._clear_face_selection()
         self._update_filter_status()
+
+    def _cycle_toolpath_filter(self, step: int):
+        """Cycle the visible toolpath subset between all, drilling, roughing, and finishing."""
+        operations = list(getattr(self._toolpath_plan, "operations", [])) if self._toolpath_plan is not None else []
+        if not operations:
+            self.statusBar().showMessage("Nessun toolpath disponibile da filtrare")
+            return
+
+        current_index = self._toolpath_mode_cycle.index(self._toolpath_mode_filter)
+        self._toolpath_mode_filter = self._toolpath_mode_cycle[(current_index + step) % len(self._toolpath_mode_cycle)]
+        self._display_toolpath_plan()
+        self.statusBar().showMessage(
+            f"Visualizzazione toolpath: {self._toolpath_filter_label()} | T avanti | Shift+T indietro"
+        )
 
     def _on_face_clicked(self, face_shape, ctrl_pressed: bool):
         """Handle left-click selection with optional Ctrl-based multi-selection."""
@@ -758,6 +830,189 @@ class AntCamViewerWindow(QMainWindow):
         }
         return colors.get(feature_type, (1.0, 0.0, 1.0))
 
+    def _display_toolpath_plan(self):
+        if self._toolpath_plan is None:
+            return
+
+        for overlay in self._toolpath_ais:
+            self.ocp_widget.remove_interactive(overlay)
+        self._toolpath_ais.clear()
+
+        for operation in getattr(self._toolpath_plan, "operations", []):
+            if not self._should_display_toolpath_operation(operation):
+                continue
+            color, width = self._toolpath_display_style(operation)
+            for shape in self._build_operation_display_shapes(operation):
+                overlay = self.ocp_widget.display_wire(
+                    shape,
+                    color=color,
+                    width=width,
+                    selectable=False,
+                )
+                self._toolpath_ais.append(overlay)
+
+    def _should_display_toolpath_operation(self, operation) -> bool:
+        if self._toolpath_mode_filter == "all":
+            return True
+        return self._toolpath_operation_mode(operation) == self._toolpath_mode_filter
+
+    def _toolpath_filter_label(self) -> str:
+        labels = {
+            "all": "tutte",
+            "drilling": "solo drilling",
+            "roughing": "solo roughing",
+            "finishing": "solo finishing",
+        }
+        return labels.get(self._toolpath_mode_filter, self._toolpath_mode_filter)
+
+    def _toolpath_operation_mode(self, operation) -> str:
+        return str(getattr(operation, "metadata", {}).get("operation_mode", "")).lower()
+
+    @staticmethod
+    def _toolpath_style_catalog():
+        return {
+            "drilling": {"label": "drill", "color": (1.0, 0.2, 1.0), "width": 2.6},
+            "slot_roughing": {"label": "slot rough", "color": (0.1, 0.45, 1.0), "width": 3.2},
+            "slot_finishing": {"label": "slot finish", "color": (0.0, 0.95, 1.0), "width": 2.4},
+            "cavity_roughing": {"label": "cavity rough", "color": (1.0, 0.6, 0.0), "width": 3.3},
+            "cavity_finishing": {"label": "cavity finish", "color": (0.15, 1.0, 0.35), "width": 2.4},
+            "profile_roughing": {"label": "profile rough", "color": (1.0, 0.35, 0.0), "width": 2.9},
+            "profile_finishing": {"label": "profile finish", "color": (1.0, 0.95, 0.1), "width": 2.2},
+            "roughing": {"label": "rough", "color": (1.0, 0.55, 0.0), "width": 3.0},
+            "finishing": {"label": "finish", "color": (0.1, 1.0, 0.35), "width": 2.0},
+            "default": {"label": "other", "color": (1.0, 1.0, 1.0), "width": 2.0},
+        }
+
+    @staticmethod
+    def _toolpath_color_hex(color) -> str:
+        return "#%02x%02x%02x" % tuple(max(0, min(255, int(round(channel * 255.0)))) for channel in color)
+
+    def _toolpath_style_key(self, operation) -> str:
+        strategy = str(getattr(operation, "strategy", "") or "").lower()
+        mode = self._toolpath_operation_mode(operation)
+        if mode == "drilling" or strategy == "drilling":
+            return "drilling"
+        if strategy == "slot_milling":
+            if mode == "roughing":
+                return "slot_roughing"
+            if mode == "finishing":
+                return "slot_finishing"
+        if strategy == "cavity_clearing":
+            if mode == "roughing":
+                return "cavity_roughing"
+            if mode == "finishing":
+                return "cavity_finishing"
+        if strategy == "2p5d_profile":
+            if mode == "roughing":
+                return "profile_roughing"
+            if mode == "finishing":
+                return "profile_finishing"
+        if mode == "roughing":
+            return "roughing"
+        if mode == "finishing":
+            return "finishing"
+        return "default"
+
+    def _toolpath_legend_html(self) -> str:
+        catalog = self._toolpath_style_catalog()
+        legend_keys = (
+            "drilling",
+            "slot_roughing",
+            "slot_finishing",
+            "cavity_roughing",
+            "cavity_finishing",
+            "profile_roughing",
+            "profile_finishing",
+        )
+        parts = []
+        for key in legend_keys:
+            entry = catalog[key]
+            color = self._toolpath_color_hex(entry["color"])
+            parts.append(f"<span style='color:{color}; font-weight:600'>{entry['label']}</span>")
+        return "Toolpath: " + " | ".join(parts)
+
+    def _toolpath_display_style(self, operation):
+        entry = self._toolpath_style_catalog()[self._toolpath_style_key(operation)]
+        return entry["color"], entry["width"]
+
+    def _build_operation_display_shapes(self, operation):
+        cut_feed = getattr(operation, "metadata", {}).get("cut_feed")
+        return [
+            wire
+            for path_points in self._split_toolpath_motion_paths(getattr(operation, "motions", []), cut_feed=cut_feed)
+            for wire in [self._make_polyline_wire(path_points)]
+            if wire is not None
+        ]
+
+    def _split_toolpath_motion_paths(self, motions, *, cut_feed=None):
+        paths: List[List[np.ndarray]] = []
+        current_path: List[np.ndarray] = []
+        previous_point: Optional[np.ndarray] = None
+        cut_feed_value: Optional[float] = None
+        if cut_feed is not None:
+            try:
+                cut_feed_value = float(cut_feed)
+            except (TypeError, ValueError):
+                cut_feed_value = None
+
+        for motion in motions:
+            point = np.array(getattr(motion, "point", ()), dtype=float)
+            if point.shape != (3,):
+                continue
+
+            move = getattr(motion, "move", "")
+            feed = getattr(motion, "feed", None)
+            is_cut_move = move == "linear"
+            if is_cut_move and cut_feed_value is not None:
+                if feed is None:
+                    is_cut_move = False
+                else:
+                    # Operation metadata rounds feeds to 4 decimals; keep the overlay tolerant to that loss.
+                    is_cut_move = bool(np.isclose(float(feed), cut_feed_value, atol=1e-4, rtol=1e-6))
+
+            if not is_cut_move:
+                if len(current_path) >= 2:
+                    paths.append(current_path)
+                current_path = []
+                previous_point = point
+                continue
+
+            if not current_path:
+                if previous_point is not None:
+                    current_path.append(np.array(previous_point, dtype=float))
+                current_path.append(point)
+            elif np.linalg.norm(current_path[-1] - point) > 1e-7:
+                current_path.append(point)
+
+            previous_point = point
+
+        if len(current_path) >= 2:
+            paths.append(current_path)
+        return paths
+
+    def _make_polyline_wire(self, points):
+        try:
+            from OCP.BRepBuilderAPI import BRepBuilderAPI_MakePolygon
+            from OCP.gp import gp_Pnt
+        except Exception:
+            return None
+
+        unique_points: List[np.ndarray] = []
+        for point in points:
+            point_np = np.array(point, dtype=float)
+            if not unique_points or np.linalg.norm(unique_points[-1] - point_np) > 1e-7:
+                unique_points.append(point_np)
+
+        if len(unique_points) < 2:
+            return None
+
+        polygon = BRepBuilderAPI_MakePolygon()
+        for point in unique_points:
+            polygon.Add(gp_Pnt(float(point[0]), float(point[1]), float(point[2])))
+        if np.linalg.norm(unique_points[0] - unique_points[-1]) <= 1e-6:
+            polygon.Close()
+        return polygon.Wire()
+
     def _mesh_to_ocp_shape(self, mesh):
         """Converte una mesh trimesh in una shape OCP."""
         try:
@@ -866,12 +1121,38 @@ class AntCamViewerWindow(QMainWindow):
 
         return best_wire
 
-def show_model_with_features(model, features, working_plane_normal=(0.0, 0.0, 1.0),
-                             contour_shadow=None, perimeter=None, vertical_arc_groups=None):
+def show_model_with_features(
+    model,
+    features,
+    working_plane_normal=(0.0, 0.0, 1.0),
+    contour_shadow=None,
+    perimeter=None,
+    vertical_arc_groups=None,
+    toolpath_plan=None,
+    *,
+    enable_face_selection: bool = True,
+    show_toolpath_legend: bool = True,
+    show_model_edges: bool = False,
+    model_edge_color=(0.18, 0.18, 0.18),
+    model_edge_width: float = 1.5,
+    status_message: Optional[str] = None,
+):
     app = QApplication.instance() or QApplication(sys.argv)
-    window = AntCamViewerWindow(model, features, working_plane_normal,
-                                contour_shadow=contour_shadow, perimeter=perimeter,
-                                vertical_arc_groups=vertical_arc_groups)
+    window = AntCamViewerWindow(
+        model,
+        features,
+        working_plane_normal,
+        contour_shadow=contour_shadow,
+        perimeter=perimeter,
+        vertical_arc_groups=vertical_arc_groups,
+        toolpath_plan=toolpath_plan,
+        enable_face_selection=enable_face_selection,
+        show_toolpath_legend=show_toolpath_legend,
+        show_model_edges=show_model_edges,
+        model_edge_color=model_edge_color,
+        model_edge_width=model_edge_width,
+        status_message=status_message,
+    )
     window.show()
     sys.exit(app.exec())
 
