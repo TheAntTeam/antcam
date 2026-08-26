@@ -49,13 +49,27 @@ def create_application():  # noqa: ANN201 - return type is QApplication (lazy Qt
 def main() -> int:
     """Bootstrap the Qt application with the full main window."""
     from PySide6.QtWidgets import QApplication
+    from antcam_rc2.core.project.models import Stock
 
     core = Application()
     try:
         app = QApplication.instance() or create_application()
         controller = ProjectController(core)
+        
+        # Auto-create a default project so the viewport immediately shows stock, 
+        # work area, fixtures, and origin axes (same behavior as gui-demo)
+        controller.new_project(
+            "New Project",
+            machine_id="makera_z1",
+            stock=Stock(
+                width_mm=200.0,
+                length_mm=200.0,
+                height_mm=10.0,
+                material_id="aluminum_6061",
+            ),
+        )
+        
         from antcam_rc2.frontends.pyside.app_window import MainWindow
-
         window = MainWindow(controller)
         window.show()
         return app.exec()
