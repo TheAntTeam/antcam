@@ -56,8 +56,11 @@ def main() -> int:
         app = QApplication.instance() or create_application()
         controller = ProjectController(core)
         
-        # Auto-create a default project so the viewport immediately shows stock, 
-        # work area, fixtures, and origin axes (same behavior as gui-demo)
+        # Create window FIRST so it can receive scene_changed signals
+        from antcam_rc2.frontends.pyside.app_window import MainWindow
+        window = MainWindow(controller)
+        
+        # Then create the default project (window is now listening to scene_changed)
         controller.new_project(
             "New Project",
             machine_id="makera_z1",
@@ -69,8 +72,6 @@ def main() -> int:
             ),
         )
         
-        from antcam_rc2.frontends.pyside.app_window import MainWindow
-        window = MainWindow(controller)
         window.show()
         return app.exec()
     finally:
