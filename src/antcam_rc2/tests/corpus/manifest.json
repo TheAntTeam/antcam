@@ -1,0 +1,674 @@
+{
+ "schema_version": "1.0",
+ "fixtures": [
+  {
+   "name": "mech_plate",
+   "path": "dxf/mech_plate.dxf",
+   "format": "dxf",
+   "units": "metric",
+   "expect": {
+    "entities": 4,
+    "layers": [
+     "profile",
+     "pockets",
+     "holes",
+     "slots"
+    ],
+    "bbox": [
+     0.0,
+     0.0,
+     60.0,
+     40.0
+    ],
+    "net_area_mm2": 2822.55,
+    "warnings_ge": 0,
+    "plan": {
+     "layer": "profile",
+     "entity_index": 0,
+     "executable": true,
+     "operations": 1
+    },
+    "simulate": {
+     "removed_mm3_min": 492.8
+    },
+    "post": {
+     "post_id": "grbl",
+     "motion_lines_ge": 55
+    }
+   }
+  },
+  {
+   "name": "pcb_panel",
+   "path": "svg/pcb_panel.svg",
+   "format": "svg",
+   "units": "metric",
+   "expect": {
+    "entities": 6,
+    "layers": [
+     "board",
+     "pads",
+     "traces"
+    ],
+    "bbox": [
+     0.0,
+     0.0,
+     100.0,
+     60.0
+    ],
+    "net_area_mm2": 7956.02,
+    "warnings_ge": 0,
+    "plan": {
+     "layer": "board",
+     "entity_index": 0,
+     "executable": true,
+     "operations": 1
+    },
+    "simulate": {
+     "removed_mm3_min": 780.8
+    },
+    "post": {
+     "post_id": "grbl",
+     "motion_lines_ge": 55
+    }
+   }
+  },
+  {
+   "name": "imperial_part",
+   "path": "dxf/imperial_part.dxf",
+   "format": "dxf",
+   "units": "imperial",
+   "expect": {
+    "entities": 2,
+    "layers": [
+     "profile",
+     "holes"
+    ],
+    "bbox": [
+     0.0,
+     0.0,
+     25.4,
+     25.4
+    ],
+    "net_area_mm2": 676.83,
+    "warnings_ge": 0,
+    "plan": {
+     "layer": "profile",
+     "entity_index": 0,
+     "executable": true,
+     "operations": 1
+    },
+    "simulate": {
+     "removed_mm3_min": 337.6
+    },
+    "post": {
+     "post_id": "grbl",
+     "motion_lines_ge": 55
+    }
+   }
+  },
+  {
+   "name": "mini_square",
+   "path": "../data/mini_square.dxf",
+   "format": "dxf",
+   "units": "metric",
+   "expect": {
+    "entities": 4,
+    "layers": [
+     "0"
+    ],
+    "bbox": [
+     0.0,
+     0.0,
+     10.0,
+     10.0
+    ],
+    "net_area_mm2": 0.0,
+    "warnings_ge": 0,
+    "plan": {
+     "layer": "0",
+     "entity_index": 0,
+     "executable": false,
+     "operations": 1
+    }
+   }
+  },
+  {
+   "name": "mini_arc_circle",
+   "path": "../data/mini_arc_circle.dxf",
+   "format": "dxf",
+   "units": "metric",
+   "expect": {
+    "entities": 3,
+    "layers": [
+     "0"
+    ],
+    "bbox": [
+     0.0,
+     0.0,
+     17.0,
+     17.0
+    ],
+    "net_area_mm2": 12.57,
+    "warnings_ge": 0,
+    "plan": {
+     "layer": "0",
+     "entity_index": 0,
+     "executable": false,
+     "operations": 1
+    }
+   }
+  },
+  {
+   "name": "mini_polyline_bulge",
+   "path": "../data/mini_polyline_bulge.dxf",
+   "format": "dxf",
+   "units": "metric",
+   "expect": {
+    "entities": 1,
+    "layers": [
+     "0"
+    ],
+    "bbox": [
+     0.0,
+     0.0,
+     10.0,
+     10.0
+    ],
+    "net_area_mm2": 139.27,
+    "warnings_ge": 0,
+    "plan": {
+     "layer": "0",
+     "entity_index": 0,
+     "executable": true,
+     "operations": 1
+    },
+    "simulate": {
+     "removed_mm3_min": 128.0
+    },
+    "post": {
+     "post_id": "grbl",
+     "motion_lines_ge": 1746
+    }
+   }
+  },
+  {
+   "name": "mini_block_insert",
+   "path": "../data/mini_block_insert.dxf",
+   "format": "dxf",
+   "units": "metric",
+   "expect": {
+    "entities": 4,
+    "layers": [
+     "0"
+    ],
+    "bbox": [
+     1.0,
+     1.0,
+     5.0,
+     3.0
+    ],
+    "net_area_mm2": 0.0,
+    "warnings_ge": 0,
+    "plan": {
+     "layer": "0",
+     "entity_index": 0,
+     "executable": false,
+     "operations": 1
+    }
+   }
+  },
+  {
+   "name": "mini_rect",
+   "path": "../data/mini_rect.svg",
+   "format": "svg",
+   "units": "metric",
+   "expect": {
+    "entities": 2,
+    "layers": [
+     "0"
+    ],
+    "bbox": [
+     1.32,
+     1.32,
+     9.26,
+     6.61
+    ],
+    "net_area_mm2": 14.0,
+    "warnings_ge": 1,
+    "plan": {
+     "layer": "0",
+     "entity_index": 0,
+     "executable": true,
+     "operations": 1
+    },
+    "simulate": {
+     "removed_mm3_min": 80.0
+    },
+    "post": {
+     "post_id": "grbl",
+     "motion_lines_ge": 55
+    }
+   }
+  },
+  {
+   "name": "mini_path",
+   "path": "../data/mini_path.svg",
+   "format": "svg",
+   "units": "metric",
+   "expect": {
+    "entities": 2,
+    "layers": [
+     "0"
+    ],
+    "bbox": [
+     1.32,
+     -0.66,
+     14.55,
+     6.61
+    ],
+    "net_area_mm2": 33.81,
+    "warnings_ge": 2,
+    "plan": {
+     "layer": "0",
+     "entity_index": 0,
+     "executable": true,
+     "operations": 1
+    },
+    "simulate": {
+     "removed_mm3_min": 116.8
+    },
+    "post": {
+     "post_id": "grbl",
+     "motion_lines_ge": 709
+    }
+   }
+  },
+  {
+   "name": "mini_groups_transform",
+   "path": "../data/mini_groups_transform.svg",
+   "format": "svg",
+   "units": "metric",
+   "expect": {
+    "entities": 1,
+    "layers": [
+     "0"
+    ],
+    "bbox": [
+     50.0,
+     50.0,
+     55.29,
+     55.29
+    ],
+    "net_area_mm2": 28.0,
+    "warnings_ge": 1,
+    "plan": {
+     "layer": "0",
+     "entity_index": 0,
+     "executable": true,
+     "operations": 1
+    }
+   }
+  },
+  {
+   "name": "gearbox_plate",
+   "path": "dxf/gearbox_plate.dxf",
+   "format": "dxf",
+   "units": "metric",
+   "expect": {
+    "entities": 8,
+    "layers": [
+     "profile",
+     "holes",
+     "pockets",
+     "ring"
+    ],
+    "bbox": [
+     0.0,
+     0.0,
+     80.0,
+     50.0
+    ],
+    "net_area_mm2": 4614.16,
+    "warnings_ge": 0,
+    "plan": {
+     "layer": "profile",
+     "entity_index": 0,
+     "executable": true,
+     "operations": 1
+    },
+    "simulate": {
+     "removed_mm3_min": 636.8
+    },
+    "post": {
+     "post_id": "grbl",
+     "motion_lines_ge": 55
+    }
+   }
+  },
+  {
+   "name": "bracket_2d",
+   "path": "dxf/bracket_2d.dxf",
+   "format": "dxf",
+   "units": "metric",
+   "expect": {
+    "entities": 2,
+    "layers": [
+     "profile",
+     "holes"
+    ],
+    "bbox": [
+     0.0,
+     0.0,
+     40.0,
+     40.0
+    ],
+    "net_area_mm2": 578.27,
+    "warnings_ge": 0,
+    "plan": {
+     "layer": "profile",
+     "entity_index": 0,
+     "executable": true,
+     "operations": 1
+    },
+    "simulate": {
+     "removed_mm3_min": 537.6
+    },
+    "post": {
+     "post_id": "grbl",
+     "motion_lines_ge": 84
+    }
+   }
+  },
+  {
+   "name": "imperial_bracket",
+   "path": "dxf/imperial_bracket.dxf",
+   "format": "dxf",
+   "units": "imperial",
+   "expect": {
+    "entities": 3,
+    "layers": [
+     "profile",
+     "holes"
+    ],
+    "bbox": [
+     0.0,
+     0.0,
+     50.8,
+     38.1
+    ],
+    "net_area_mm2": 884.15,
+    "warnings_ge": 0,
+    "plan": {
+     "layer": "profile",
+     "entity_index": 0,
+     "executable": true,
+     "operations": 1
+    },
+    "simulate": {
+     "removed_mm3_min": 636.8
+    },
+    "post": {
+     "post_id": "grbl",
+     "motion_lines_ge": 84
+    }
+   }
+  },
+  {
+   "name": "helix_arcs",
+   "path": "dxf/helix_arcs.dxf",
+   "format": "dxf",
+   "units": "metric",
+   "expect": {
+    "entities": 4,
+    "layers": [
+     "arcs",
+     "ellipse",
+     "spline"
+    ],
+    "bbox": [
+     0.0,
+     -12.37,
+     72.0,
+     67.2
+    ],
+    "net_area_mm2": 417.09,
+    "warnings_ge": 0,
+    "plan": {
+     "layer": "arcs",
+     "entity_index": 0,
+     "executable": false,
+     "operations": 1
+    }
+   }
+  },
+  {
+   "name": "nested_blocks",
+   "path": "dxf/nested_blocks.dxf",
+   "format": "dxf",
+   "units": "metric",
+   "expect": {
+    "entities": 7,
+    "layers": [
+     "0",
+     "frame"
+    ],
+    "bbox": [
+     0.0,
+     0.0,
+     70.0,
+     50.0
+    ],
+    "net_area_mm2": 482.84,
+    "warnings_ge": 0,
+    "plan": {
+     "layer": "0",
+     "entity_index": 0,
+     "executable": true,
+     "operations": 1
+    },
+    "simulate": {
+     "removed_mm3_min": 254.4
+    },
+    "post": {
+     "post_id": "grbl",
+     "motion_lines_ge": 55
+    }
+   }
+  },
+  {
+   "name": "symmetric_plate",
+   "path": "dxf/symmetric_plate.dxf",
+   "format": "dxf",
+   "units": "metric",
+   "expect": {
+    "entities": 5,
+    "layers": [
+     "profile",
+     "holes",
+     "centerline"
+    ],
+    "bbox": [
+     0.0,
+     0.0,
+     60.0,
+     30.0
+    ],
+    "net_area_mm2": 1950.8,
+    "warnings_ge": 0,
+    "plan": {
+     "layer": "profile",
+     "entity_index": 0,
+     "executable": true,
+     "operations": 1
+    },
+    "simulate": {
+     "removed_mm3_min": 444.8
+    },
+    "post": {
+     "post_id": "grbl",
+     "motion_lines_ge": 55
+    }
+   }
+  },
+  {
+   "name": "gear_teeth",
+   "path": "dxf/gear_teeth.dxf",
+   "format": "dxf",
+   "units": "metric",
+   "expect": {
+    "entities": 3,
+    "layers": [
+     "outer",
+     "hub",
+     "bore"
+    ],
+    "bbox": [
+     22.0,
+     22.0,
+     58.0,
+     58.0
+    ],
+    "net_area_mm2": 1247.21,
+    "warnings_ge": 0,
+    "plan": {
+     "layer": "outer",
+     "entity_index": 0,
+     "executable": false,
+     "operations": 1
+    }
+   }
+  },
+  {
+   "name": "tabs_and_slots",
+   "path": "dxf/tabs_and_slots.dxf",
+   "format": "dxf",
+   "units": "metric",
+   "expect": {
+    "entities": 3,
+    "layers": [
+     "profile",
+     "slots",
+     "holes"
+    ],
+    "bbox": [
+     0.0,
+     0.0,
+     50.0,
+     20.0
+    ],
+    "net_area_mm2": 1059.63,
+    "warnings_ge": 0,
+    "plan": {
+     "layer": "profile",
+     "entity_index": 0,
+     "executable": true,
+     "operations": 1
+    },
+    "simulate": {
+     "removed_mm3_min": 348.8
+    },
+    "post": {
+     "post_id": "grbl",
+     "motion_lines_ge": 55
+    }
+   }
+  },
+  {
+   "name": "multi_layer_pcb",
+   "path": "svg/multi_layer_pcb.svg",
+   "format": "svg",
+   "units": "metric",
+   "expect": {
+    "entities": 11,
+    "layers": [
+     "outline",
+     "copper",
+     "pads",
+     "silkscreen"
+    ],
+    "bbox": [
+     0.0,
+     0.0,
+     80.0,
+     60.0
+    ],
+    "net_area_mm2": 6219.31,
+    "warnings_ge": 0,
+    "plan": {
+     "layer": "outline",
+     "entity_index": 0,
+     "executable": true,
+     "operations": 1
+    },
+    "simulate": {
+     "removed_mm3_min": 684.8
+    },
+    "post": {
+     "post_id": "grbl",
+     "motion_lines_ge": 55
+    }
+   }
+  },
+  {
+   "name": "logo_paths",
+   "path": "svg/logo_paths.svg",
+   "format": "svg",
+   "units": "metric",
+   "expect": {
+    "entities": 4,
+    "layers": [
+     "0"
+    ],
+    "bbox": [
+     5.0,
+     6.0,
+     85.0,
+     40.0
+    ],
+    "net_area_mm2": 480.55,
+    "warnings_ge": 2,
+    "plan": {
+     "layer": "0",
+     "entity_index": 0,
+     "executable": false,
+     "operations": 1
+    }
+   }
+  },
+  {
+   "name": "laser_machine",
+   "path": "svg/laser_machine.svg",
+   "format": "svg",
+   "units": "metric",
+   "expect": {
+    "entities": 6,
+    "layers": [
+     "frame",
+     "bed",
+     "head"
+    ],
+    "bbox": [
+     1.32,
+     1.32,
+     102.12,
+     77.12
+    ],
+    "net_area_mm2": 2928.24,
+    "warnings_ge": 1,
+    "plan": {
+     "layer": "frame",
+     "entity_index": 0,
+     "executable": true,
+     "operations": 1
+    },
+    "simulate": {
+     "removed_mm3_min": 668.8
+    },
+    "post": {
+     "post_id": "grbl",
+     "motion_lines_ge": 55
+    }
+   }
+  }
+ ]
+}

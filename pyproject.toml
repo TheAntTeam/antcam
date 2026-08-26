@@ -19,11 +19,18 @@ classifiers = [
 ]
 license = {text = "MIT"}
 dependencies = [
+    "numpy",
   "typer",
   "rich",
-  "OCP",
+  "cadquery-ocp",
+    "trimesh",
 ]
 requires-python = ">= 3.13"
+
+[project.optional-dependencies]
+gui = [
+        "PySide6",
+]
 
 [dependency-groups]
 dev = [
@@ -95,4 +102,6 @@ exclude_also = [
 
 [tool.uv]
 package = true
-default-groups = ["dev"]
+
+[tool.pytest.ini_options]
+addopts = ["--ignore=src/antcam_rc2"]

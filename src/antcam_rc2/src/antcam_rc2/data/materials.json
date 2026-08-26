@@ -1,0 +1,62 @@
+{
+  "schema_version": "1.0",
+  "catalog_id": "materials",
+  "items": [
+    {
+      "id": "generic",
+      "name": "Generic material",
+      "source_reference": "AntCAM RC2 initial conservative policy",
+      "data_status": "conservative_pending_verification",
+      "family": "generic",
+      "surface_speed_m_min": 100.0,
+      "chip_load_mm_tooth": 0.015,
+      "plunge_ratio": 0.35,
+      "machinability_factor": 1.0
+    },
+    {
+      "id": "aluminum_6061",
+      "name": "Aluminum 6061",
+      "source_reference": "AntCAM RC2 initial conservative policy; validate against tool manufacturer data",
+      "data_status": "conservative_pending_verification",
+      "family": "aluminum",
+      "surface_speed_m_min": 180.0,
+      "chip_load_mm_tooth": 0.02,
+      "plunge_ratio": 0.4,
+      "machinability_factor": 1.0
+    },
+    {
+      "id": "steel_mild",
+      "name": "Mild steel",
+      "source_reference": "AntCAM RC2 initial conservative policy; validate against tool manufacturer data",
+      "data_status": "conservative_pending_verification",
+      "family": "steel",
+      "surface_speed_m_min": 60.0,
+      "chip_load_mm_tooth": 0.01,
+      "plunge_ratio": 0.3,
+      "machinability_factor": 0.8
+    },
+    {
+      "id": "plastic",
+      "name": "Engineering plastic",
+      "source_reference": "AntCAM RC2 initial conservative policy; validate against material data",
+      "data_status": "conservative_pending_verification",
+      "family": "plastic",
+      "surface_speed_m_min": 140.0,
+      "chip_load_mm_tooth": 0.03,
+      "plunge_ratio": 0.45,
+      "machinability_factor": 1.0
+    },
+    {
+      "id": "hard_wood",
+      "name": "Hard wood",
+      "source_reference": "AntCAM RC2 initial conservative policy; validate against router bit manufacturer data",
+      "data_status": "conservative_pending_verification",
+      "family": "wood",
+      "hardness": "hard",
+      "surface_speed_m_min": 220.0,
+      "chip_load_mm_tooth": 0.05,
+      "plunge_ratio": 0.5,
+      "machinability_factor": 1.15
+    }
+  ]
+}

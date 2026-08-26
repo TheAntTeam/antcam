@@ -1,0 +1,10 @@
+{
+ "name": "pcb_panel",
+ "plan_canonical_fingerprint": "sha256:d24c3365aae43c24f7803d77cd68cdb7e8acab2a97a52e3a5a8d25c5b47cce4d",
+ "operation_count": 1,
+ "executable": true,
+ "removed_voxels": 976,
+ "removed_mm3": 976.0,
+ "operations_simulated": 1,
+ "simulation_canonical_fingerprint": "sha256:02dfea5b2a3123ee96e49b7921cd0496c6ca128a53f2289eb6988b92031adfd2"
+}

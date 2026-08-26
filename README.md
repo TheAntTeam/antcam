@@ -74,6 +74,30 @@ Run quality checks (format, lint, type check, test):
 just qa
 ```
 
+## Viewer Launch
+
+To inspect the extracted features and toolpath overlays later, use the repository launcher instead of running `src/antcam/main_viewer.py` directly.
+
+From VS Code:
+
+- Open Run and Debug.
+- Launch `AntCAM Viewer: Prompt Model` to choose a STEP/STL file.
+- Or launch `AntCAM Viewer: Sample Automatic Plan` to open a ready-made sample with automatic planning enabled.
+- For bundled samples under `tests/data`, you can enter just the filename, for example `flange.step`.
+- Inside the viewer, press `T` to cycle toolpath visibility between `all`, `drilling`, `roughing`, and `finishing`. Use `Shift+T` to cycle backward.
+
+From the terminal:
+
+```powershell
+.venv\Scripts\python.exe run_main_viewer.py tests/data/mounting_spider.step --parameter-mode automatic --tool-library standard_mm --material-profile aluminum --profile-stock-allowance 0.4 --cwd-root
+```
+
+For bundled samples, the launcher also accepts the short form:
+
+```powershell
+.venv\Scripts\python.exe run_main_viewer.py flange.step --parameter-mode automatic --tool-library standard_mm --material-profile aluminum --cwd-root
+```
+
 ## Author
 
 AntCAM was created in 2026 by The Ant Team.

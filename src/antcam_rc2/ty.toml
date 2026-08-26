@@ -1,0 +1,15 @@
+[environment]
+python-version = "3.13"
+
+[[overrides]]
+include = ["**/viewport/renderer.py"]
+[overrides.rules]
+unresolved-attribute = "ignore"
+no-matching-overload = "ignore"
+invalid-argument-type = "ignore"
+invalid-method-override = "ignore"
+
+[[overrides]]
+include = ["**/io3d/step.py"]
+[overrides.rules]
+unresolved-import = "ignore"

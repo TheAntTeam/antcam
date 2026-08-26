@@ -1,0 +1,10 @@
+{
+ "name": "mini_polyline_bulge",
+ "plan_canonical_fingerprint": "sha256:8c1dbb2cb6e9256c78f91935679a96cd71886f3ee57f033861c1613a98909552",
+ "operation_count": 1,
+ "executable": true,
+ "removed_voxels": 160,
+ "removed_mm3": 160.0,
+ "operations_simulated": 1,
+ "simulation_canonical_fingerprint": "sha256:60ddf5187a810c7f3c5019ec1ba1cc318c99b3dc2c11df5822a2aa0c3239846b"
+}

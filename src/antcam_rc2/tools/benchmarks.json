@@ -1,0 +1,14 @@
+{
+  "note": "Provisional budgets = development-hardware baselines (PLAN_FASE_8 8.2 + PLAN_FASE_9 9.8) x 2. Recalibrate on the first CI run (baseline_ci x 2) and update this file.",
+  "plan_50_ops": 0.17,
+  "plan_stress_first": 3.16,
+  "plan_stress_replan": 0.6,
+  "simulate_20_ops": 0.6,
+  "post_12k_motion": 0.444,
+  "render_5k_entities": 0.63,
+  "import3d_stl": 0.18,
+  "import3d_step": 7.1,
+  "picking_3d": 0.002,
+  "render_3d_mesh": 0.008,
+  "plan3d_feature": 0.15
+}

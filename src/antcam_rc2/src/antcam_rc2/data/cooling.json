@@ -1,0 +1,42 @@
+{
+  "schema_version": "1.0",
+  "catalog_id": "cooling",
+  "items": [
+    {
+      "id": "none",
+      "name": "No active cooling",
+      "source_reference": "AntCAM RC2 initial conservative policy",
+      "data_status": "conservative_pending_verification",
+      "kind": "none",
+      "surface_speed_factor": 0.85,
+      "chip_load_factor": 0.85
+    },
+    {
+      "id": "aerodust",
+      "name": "AeroDust air cooling",
+      "source_reference": "Makera Z1 product documentation; AntCAM RC2 initial policy",
+      "data_status": "conservative_pending_verification",
+      "kind": "air",
+      "surface_speed_factor": 1.0,
+      "chip_load_factor": 1.0
+    },
+    {
+      "id": "mist",
+      "name": "Mist cooling",
+      "source_reference": "AntCAM RC2 initial conservative policy",
+      "data_status": "conservative_pending_verification",
+      "kind": "mist",
+      "surface_speed_factor": 1.05,
+      "chip_load_factor": 1.05
+    },
+    {
+      "id": "flood",
+      "name": "Flood cooling",
+      "source_reference": "AntCAM RC2 initial conservative policy",
+      "data_status": "conservative_pending_verification",
+      "kind": "flood",
+      "surface_speed_factor": 1.15,
+      "chip_load_factor": 1.15
+    }
+  ]
+}

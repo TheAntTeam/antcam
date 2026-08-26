@@ -1,0 +1,169 @@
+{
+  "schema_version": "1.0",
+  "catalog_id": "tools",
+  "items": [
+    {
+      "id": "end_mill_3_175_2f",
+      "name": "3.175 mm two-flute end mill",
+      "source_reference": "AntCAM RC2 starter tool definition; verify tool dimensions before use",
+      "data_status": "conservative_pending_verification",
+      "tool_type": "end_mill",
+      "cutting_diameter_mm": 3.175,
+      "shank_diameter_mm": 3.175,
+      "flute_count": 2,
+      "flute_length_mm": 12.0,
+      "overall_length_mm": 38.0,
+      "tool_material": "carbide",
+      "compatible_collet_sizes_mm": [
+        3.175
+      ]
+    },
+    {
+      "id": "end_mill_6_2f",
+      "name": "6 mm two-flute end mill",
+      "source_reference": "AntCAM RC2 starter tool definition; verify tool dimensions before use",
+      "data_status": "conservative_pending_verification",
+      "tool_type": "end_mill",
+      "cutting_diameter_mm": 6.0,
+      "shank_diameter_mm": 6.0,
+      "flute_count": 2,
+      "flute_length_mm": 18.0,
+      "overall_length_mm": 50.0,
+      "tool_material": "carbide",
+      "compatible_collet_sizes_mm": [
+        6.0
+      ]
+    },
+    {
+      "id": "ball_mill_3_175_2f",
+      "name": "3.175 mm two-flute ball mill",
+      "source_reference": "AntCAM RC2 starter tool definition; verify tool dimensions before use",
+      "data_status": "conservative_pending_verification",
+      "tool_type": "ball",
+      "cutting_diameter_mm": 3.175,
+      "shank_diameter_mm": 3.175,
+      "flute_count": 2,
+      "flute_length_mm": 12.0,
+      "overall_length_mm": 38.0,
+      "tool_material": "carbide",
+      "compatible_collet_sizes_mm": [
+        3.175
+      ]
+    },
+    {
+      "id": "bull_mill_3_175_2f",
+      "name": "3.175 mm two-flute bull mill",
+      "source_reference": "AntCAM RC2 starter tool definition; verify tool dimensions before use",
+      "data_status": "conservative_pending_verification",
+      "tool_type": "bull",
+      "cutting_diameter_mm": 3.175,
+      "shank_diameter_mm": 3.175,
+      "flute_count": 2,
+      "flute_length_mm": 12.0,
+      "overall_length_mm": 38.0,
+      "tool_material": "carbide",
+      "compatible_collet_sizes_mm": [
+        3.175
+      ]
+    },
+    {
+      "id": "v_bit_30",
+      "name": "30 degree V-bit",
+      "source_reference": "AntCAM RC2 seed: V-bit angle from common 30-degree engraving tool geometry; verify before use",
+      "data_status": "conservative_pending_verification",
+      "tool_type": "v_bit",
+      "cutting_diameter_mm": 6.0,
+      "shank_diameter_mm": 6.0,
+      "flute_count": 2,
+      "flute_length_mm": 12.0,
+      "overall_length_mm": 45.0,
+      "tool_material": "carbide",
+      "compatible_collet_sizes_mm": [
+        6.0
+      ],
+      "v_bit_angle_deg": 30.0
+    },
+    {
+      "id": "drill_2",
+      "name": "2 mm drill",
+      "source_reference": "AntCAM RC2 starter tool definition; verify tool dimensions before use",
+      "data_status": "conservative_pending_verification",
+      "tool_type": "drill",
+      "cutting_diameter_mm": 2.0,
+      "shank_diameter_mm": 3.175,
+      "flute_count": 2,
+      "flute_length_mm": 16.0,
+      "overall_length_mm": 38.0,
+      "tool_material": "HSS",
+      "compatible_collet_sizes_mm": [
+        3.175
+      ]
+    },
+    {
+      "id": "bore_6",
+      "name": "6 mm boring tool",
+      "source_reference": "AntCAM RC2 starter tool definition; verify tool dimensions before use",
+      "data_status": "conservative_pending_verification",
+      "tool_type": "bore",
+      "cutting_diameter_mm": 6.0,
+      "shank_diameter_mm": 6.0,
+      "flute_count": 1,
+      "flute_length_mm": 15.0,
+      "overall_length_mm": 50.0,
+      "tool_material": "carbide",
+      "compatible_collet_sizes_mm": [
+        6.0
+      ]
+    },
+    {
+      "id": "thread_mill_3",
+      "name": "3 mm thread mill",
+      "source_reference": "AntCAM RC2 starter tool definition; verify tool dimensions before use",
+      "data_status": "conservative_pending_verification",
+      "tool_type": "thread_mill",
+      "cutting_diameter_mm": 3.0,
+      "shank_diameter_mm": 3.175,
+      "flute_count": 3,
+      "flute_length_mm": 8.0,
+      "overall_length_mm": 38.0,
+      "tool_material": "carbide",
+      "compatible_collet_sizes_mm": [
+        3.175
+      ]
+    },
+    {
+      "id": "tap_m3",
+      "name": "M3 tap",
+      "source_reference": "AntCAM RC2 starter tool definition; pitch/synchronization are not modeled in Phase 2",
+      "data_status": "conservative_pending_verification",
+      "tool_type": "tap",
+      "cutting_diameter_mm": 3.0,
+      "shank_diameter_mm": 3.175,
+      "flute_count": 3,
+      "flute_length_mm": 8.0,
+      "overall_length_mm": 38.0,
+      "tool_material": "HSS",
+      "compatible_collet_sizes_mm": [
+        3.175
+      ]
+    },
+    {
+      "id": "t_slot_6",
+      "name": "6 mm T-slot cutter",
+      "source_reference": "AntCAM RC2 conservative seed; verify T-slot cutter dimensions before use",
+      "data_status": "conservative_pending_verification",
+      "tool_type": "t_slot",
+      "cutting_diameter_mm": 6.0,
+      "shank_diameter_mm": 6.0,
+      "flute_count": 2,
+      "flute_length_mm": 6.0,
+      "overall_length_mm": 45.0,
+      "tool_material": "carbide",
+      "compatible_collet_sizes_mm": [
+        6.0
+      ],
+      "t_slot_neck_diameter_mm": 4.0,
+      "t_slot_head_diameter_mm": 6.0
+    }
+  ]
+}

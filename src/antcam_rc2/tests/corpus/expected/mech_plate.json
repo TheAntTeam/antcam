@@ -1,0 +1,10 @@
+{
+ "name": "mech_plate",
+ "plan_canonical_fingerprint": "sha256:b1362dba38f7aa8e1f5e69a286c82d8c0e4929055a84db381fceaa4a2ae2d461",
+ "operation_count": 1,
+ "executable": true,
+ "removed_voxels": 616,
+ "removed_mm3": 616.0,
+ "operations_simulated": 1,
+ "simulation_canonical_fingerprint": "sha256:e59cd3a2e23eb406aadf8b215fc8cd38708e4422969e1478521e5e835d52c1ca"
+}

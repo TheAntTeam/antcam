@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0",
+  "catalog_id": "machines",
+  "items": [
+    {
+      "id": "makera_z1",
+      "name": "Makera Z1",
+      "source_reference": "PLAN.md section 6; dimensions and feed limits require manufacturer verification before production use",
+      "data_status": "conservative_pending_verification",
+      "vendor": "Makera",
+      "model": "Z1",
+      "catalog_version": "1.0",
+      "work_area_x_mm": 200.0,
+      "work_area_y_mm": 200.0,
+      "work_area_z_mm": 100.0,
+      "spindle_power_w": 150.0,
+      "min_rpm": 0.0,
+      "max_rpm": 13000.0,
+      "max_feed_mm_min": 1000.0,
+      "collet_sizes_mm": [3.175, 4.0, 6.0, 6.35],
+      "default_collet_size_mm": 3.175,
+      "supported_cooling_ids": ["none", "aerodust"],
+      "default_cooling_id": "aerodust",
+      "native_post": "makera",
+      "spindle_diameter_mm": 52.0,
+      "spindle_length_mm": 100.0,
+      "rigid_tapping": false,
+      "three_d_toolpath": false
+    }
+  ]
+}

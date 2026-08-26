@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" width="80mm" height="60mm" viewBox="0 0 80 60">
+  <g inkscape:label="outline">
+    <rect x="0" y="0" width="80" height="60" fill="none" stroke="black"/>
+  </g>
+  <g inkscape:label="copper">
+    <rect x="5" y="5" width="30" height="20" fill="none" stroke="black"/>
+    <line x1="5" y1="15" x2="35" y2="15" stroke="black"/>
+    <path d="M 40 10 L 60 10 L 60 25 L 45 25" fill="none" stroke="black"/>
+  </g>
+  <g inkscape:label="pads">
+    <circle cx="10" cy="10" r="2.5"/>
+    <circle cx="30" cy="10" r="2.5"/>
+    <circle cx="10" cy="20" r="2.5"/>
+    <circle cx="30" cy="20" r="2.5"/>
+    <circle cx="70" cy="50" r="3"/>
+  </g>
+  <g inkscape:label="silkscreen">
+    <path d="M 60 45 L 70 45 L 70 40 L 75 40 L 75 55 L 60 55 Z" fill="none" stroke="black"/>
+    <line x1="40" y1="45" x2="55" y2="55" stroke="black"/>
+  </g>
+</svg>

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+     width="100mm" height="60mm" viewBox="0 0 100 60">
+  <g inkscape:label="board">
+    <rect x="0" y="0" width="100" height="60" fill="none" stroke="black"/>
+  </g>
+  <g inkscape:label="pads">
+    <circle cx="10" cy="10" r="3"/>
+    <circle cx="90" cy="10" r="3"/>
+    <circle cx="10" cy="50" r="3"/>
+    <circle cx="90" cy="50" r="3"/>
+  </g>
+  <g inkscape:label="traces">
+    <path d="M10 10 L90 10"/>
+    <path d="M10 50 L50 50 A10 10 0 0 1 70 50 L90 50"/>
+    <path d="M10 30 L90 30" stroke="black"/>
+  </g>
+</svg>
