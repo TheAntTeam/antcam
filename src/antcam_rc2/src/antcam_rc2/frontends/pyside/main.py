@@ -49,7 +49,7 @@ def create_application():  # noqa: ANN201 - return type is QApplication (lazy Qt
 def main() -> int:
     """Bootstrap the Qt application with the full main window."""
     from PySide6.QtWidgets import QApplication
-    from antcam_rc2.core.project.models import Stock
+    from antcam_rc2.core.project.models import Stock, StockOrigin
 
     core = Application()
     try:
@@ -69,6 +69,7 @@ def main() -> int:
                 length_mm=200.0,
                 height_mm=10.0,
                 material_id="aluminum_6061",
+                origin=StockOrigin.CORNER_XY_TOP_Z,
             ),
         )
         

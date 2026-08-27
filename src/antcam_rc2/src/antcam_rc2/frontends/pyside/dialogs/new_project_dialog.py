@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QLineEdit, QVBoxLayout
 
-from antcam_rc2.core.project.models import Stock
+from antcam_rc2.core.project.models import Stock, StockOrigin
 
 
 class NewProjectDialog(QDialog):
@@ -56,6 +56,7 @@ class NewProjectDialog(QDialog):
             length_mm=self._length.value(),
             height_mm=self._height.value(),
             material_id=self._material.currentData() or "aluminum_6061",
+            origin=StockOrigin.CORNER_XY_TOP_Z,
         )
 
     def name(self) -> str:

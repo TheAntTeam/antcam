@@ -16,7 +16,6 @@ from antcam_rc2.app.application import Application
 from antcam_rc2.core.databases.models import MachineProfile
 from antcam_rc2.core.geometry3d.scene import SolidScene
 from antcam_rc2.core.identifiers import new_id
-from antcam_rc2.core.io import import_file
 from antcam_rc2.core.io.scene import GeometryScene
 from antcam_rc2.core.io3d import import_file_3d
 from antcam_rc2.core.project.fixture_library import FixtureLibrary
@@ -43,6 +42,7 @@ from antcam_rc2.core.simulation.voxels import VoxelGrid
 from antcam_rc2.core.toolpath.models import ToolpathArtifact, ToolpathPlan
 from antcam_rc2.frontends.pyside import theme
 from antcam_rc2.frontends.pyside.controllers.event_bridge import EventBridge
+from antcam_rc2.frontends.pyside.controllers.geometry_import_controller import GeometryImportController
 from antcam_rc2.frontends.pyside.controllers.simulation_controller import SimulationController
 from antcam_rc2.frontends.pyside.controllers.toolpath_controller import ToolpathController
 from antcam_rc2.frontends.pyside.viewport.gl_viewport import GLViewport
@@ -80,11 +80,19 @@ class ProjectController(QObject):
         self.event_bridge = EventBridge(application.event_bus, self)
         self.toolpath_controller = ToolpathController(application, self)
         self.simulation_controller = SimulationController(application, self)
+        self.geometry_import_controller = GeometryImportController(application, self)
         self._viewport: GLViewport | None = None
         self.toolpath_controller.plan_ready.connect(self._on_plan_ready)
         self.toolpath_controller.busy_changed.connect(self._on_plan_busy)
         self.toolpath_controller.plan_failed.connect(
             lambda message: self.status_message.emit(f"Planning failed: {message}")
+        )
+        # Geometry import signals
+        self.geometry_import_controller.geometry_imported.connect(self._on_geometry_imported)
+        self.geometry_import_controller.solid_imported.connect(self._on_solid_imported)
+        self.geometry_import_controller.fixture_loaded.connect(self._on_fixture_loaded)
+        self.geometry_import_controller.import_failed.connect(
+            lambda message: self.status_message.emit(f"Import failed: {message}")
         )
         # Kernel events (post-commit) refresh the UI state exactly once per mutation.
         bridge = self.event_bridge
@@ -161,7 +169,12 @@ class ProjectController(QObject):
     def import_geometry(self, path: Path) -> None:
         if self._project is None:
             return
-        scene = import_file(path)
+        self.status_message.emit(f"Importing {path.name}...")
+        self.geometry_import_controller.import_geometry(path)
+
+    def _on_geometry_imported(self, scene: GeometryScene) -> None:
+        if self._project is None:
+            return
         self._center_geometry_in_stock(scene)
         self._app.project_service.attach_geometry(self._project.id, scene)
         self._scene = scene
@@ -169,14 +182,24 @@ class ProjectController(QObject):
         self._rebuild_setup_graph()
         self.scene_changed.emit()
         self.clear_toolpaths()
-        self.status_message.emit(f"Imported {path.name}")
+        self.status_message.emit(f"Imported {scene.source.path}")
 
     def import_solid(self, path: Path) -> None:
         """Import a 3D solid (STEP/STL) with positioning dialog, centered on stock."""
         if self._project is None:
             self.status_message.emit("No project open")
             return
-        scene = import_file_3d(path)
+
+        # First, we need to do a quick import to show the dialog with the solid
+        # We'll do a fast import (without heavy tessellation for display)
+        # Actually, the dialog needs the scene - let's do a quick import in background
+        # For now, we'll do the import in background and show dialog after
+        self.status_message.emit(f"Loading {path.name}...")
+        self.geometry_import_controller.import_solid(path)
+
+    def _on_solid_imported(self, scene: SolidScene) -> None:
+        if self._project is None:
+            return
 
         # Show positioning dialog
         from antcam_rc2.frontends.pyside.dialogs.import_solid_dialog import ImportSolidDialog
@@ -189,7 +212,7 @@ class ProjectController(QObject):
         # Apply the offset based on the selected origin
         offset = dialog.result_offset()
         origin = dialog.result_origin()
-        self._apply_solid_origin_offset(scene, self._project.stock, origin, offset)
+        scene = self._apply_solid_origin_offset(scene, self._project.stock, origin, offset)
 
         # Store scene and rebuild
         self._solid_scene = scene
@@ -199,7 +222,7 @@ class ProjectController(QObject):
         self._rebuild_setup_graph()
         self.scene_changed.emit()
         self.clear_toolpaths()
-        self.status_message.emit(f"Imported 3D {path.name} ({scene.feature_count()} features)")
+        self.status_message.emit(f"Imported 3D {scene.source.path} ({scene.feature_count()} features)")
 
     def _apply_solid_origin_offset(
         self,
@@ -207,8 +230,8 @@ class ProjectController(QObject):
         stock: Stock,
         origin: StockOrigin,
         offset: tuple[float, float, float],
-    ) -> None:
-        """Apply the solid position offset relative to the stock origin."""
+    ) -> SolidScene:
+        """Apply the solid position offset relative to the stock origin. Returns translated scene."""
         ox, oy, oz = offset
 
         # Calculate the stock origin point in world coordinates
@@ -237,7 +260,7 @@ class ProjectController(QObject):
             origin_z += wcs.offset_z_mm
 
         # Translate the solid scene
-        self._solid_scene = scene.translate(origin_x + ox, origin_y + oy, origin_z + oz)
+        return scene.translate(origin_x + ox, origin_y + oy, origin_z + oz)
 
     def select_solid_feature(self, body_index: int, feature_index: int) -> None:
         """Add one picked 3D feature to the active operation (like 2D picking)."""
@@ -347,14 +370,15 @@ class ProjectController(QObject):
         if self._project is None:
             self.status_message.emit("No project open")
             return None
-        lib = FixtureLibrary.get_default()
-        fixture = lib.get_fixture(fixture_id)
-        if fixture is None:
-            self.status_message.emit(f"Fixture not found in library: {fixture_id}")
-            return None
+        self.status_message.emit("Loading fixture from library...")
+        self.geometry_import_controller.load_fixture(fixture_id)
+        return None  # Actual fixture loaded asynchronously via _on_fixture_loaded
+
+    def _on_fixture_loaded(self, fixture: Fixture) -> None:
+        if self._project is None:
+            return
         self.add_fixture(fixture)
         self.status_message.emit(f"Fixture '{fixture.name}' loaded from library")
-        return fixture
 
     # ------------------------------------------------------------------ operations
     def add_operation(
@@ -528,8 +552,19 @@ class ProjectController(QObject):
         bbox = scene.bounding_box()
         stock = self._project.stock
         wcs = self._project.wcs
-        target_x = stock.position_x_mm + wcs.offset_x_mm + stock.width_mm / 2.0
-        target_y = stock.position_y_mm + wcs.offset_y_mm + stock.length_mm / 2.0
+        offset_x = wcs.offset_x_mm
+        offset_y = wcs.offset_y_mm
+
+        # Compute stock center XY respecting Stock.origin
+        if stock.origin.value in ("center_xy_top_z", "center_xy_zero_z"):
+            # Position is center XY
+            target_x = stock.position_x_mm + offset_x
+            target_y = stock.position_y_mm + offset_y
+        else:
+            # Position is corner XY
+            target_x = stock.position_x_mm + offset_x + stock.width_mm / 2.0
+            target_y = stock.position_y_mm + offset_y + stock.length_mm / 2.0
+
         scene.translate(target_x - bbox.center.x, target_y - bbox.center.y)
 
     def _on_plan_ready(self, plan: ToolpathPlan) -> None:

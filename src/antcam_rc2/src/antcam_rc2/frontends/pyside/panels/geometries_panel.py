@@ -86,6 +86,11 @@ class GeometriesPanel(QWidget):
         # Refresh when scene changes (geometries loaded)
         self._controller.scene_changed.connect(self.refresh)
 
+        # Connect to geometry import controller busy state
+        self._controller.geometry_import_controller.busy_changed.connect(self._on_import_busy)
+        self._import_2d_button = import_2d
+        self._import_3d_button = import_3d
+
     def refresh(self) -> None:
         """Refresh all lists from the current project."""
         project = self._controller.project
@@ -254,3 +259,14 @@ class GeometriesPanel(QWidget):
         # Clear toolpaths since geometry changed
         self._controller.clear_toolpaths()
         self.refresh()
+
+    def _on_import_busy(self, busy: bool) -> None:
+        """Update button states when import is in progress."""
+        self._import_2d_button.setEnabled(not busy)
+        self._import_3d_button.setEnabled(not busy)
+        if busy:
+            self._import_2d_button.setText("Importing...")
+            self._import_3d_button.setText("Importing...")
+        else:
+            self._import_2d_button.setText("Import 2D Geometry...")
+            self._import_3d_button.setText("Import 3D Solid...")
