@@ -83,3 +83,4 @@ src/antcam_rc2/tests/data/*.step
 
 # Generated docs
 docs/section-offset-algorithm.md
+ci.uml
