@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from antcam_rc2 import __version__
+from antcam_rc2.core.project.models import StockOrigin
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -131,7 +132,7 @@ def _run_gui_demo(args) -> int:
         return 2
 
     from antcam_rc2.app.application import Application
-    from antcam_rc2.core.project.models import Stock
+    from antcam_rc2.core.project.models import Stock, StockOrigin
     from antcam_rc2.frontends.pyside.app_window import MainWindow
     from antcam_rc2.frontends.pyside.controllers.project_controller import ProjectController
     from antcam_rc2.frontends.pyside.main import create_application
@@ -150,6 +151,7 @@ def _run_gui_demo(args) -> int:
                 length_mm=200.0,
                 height_mm=10.0,
                 material_id="aluminum_6061",
+                origin=StockOrigin.CORNER_XY_TOP_Z,
             ),
         )
         controller.status_message.emit(f"Demo {args.sample}: project ready; import geometry manually")
@@ -339,6 +341,7 @@ def _run_demo(args) -> int:
                 length_mm=max(box.height, 1.0) + 10.0,
                 height_mm=10.0,
                 material_id="aluminum_6061",
+                origin=StockOrigin.CORNER_XY_TOP_Z,
             ),
         )
         app.project_service.attach_geometry(project.id, scene)

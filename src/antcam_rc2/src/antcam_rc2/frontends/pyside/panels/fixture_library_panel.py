@@ -46,6 +46,10 @@ class FixtureLibraryPanel(QWidget):
         # Refresh when library changes
         controller.fixture_library_changed.connect(self.refresh)
 
+        # Connect to geometry import controller busy state
+        self._controller.geometry_import_controller.busy_changed.connect(self._on_import_busy)
+        self._add_button = add_to_project
+
     def refresh(self) -> None:
         """Reload the fixture list from the library."""
         lib = FixtureLibrary.get_default()
@@ -90,3 +94,11 @@ class FixtureLibraryPanel(QWidget):
             lib = FixtureLibrary.get_default()
             lib.delete_fixture(fixture_id)
             self.refresh()
+
+    def _on_import_busy(self, busy: bool) -> None:
+        """Update button states when fixture import is in progress."""
+        self._add_button.setEnabled(not busy)
+        if busy:
+            self._add_button.setText("Loading...")
+        else:
+            self._add_button.setText("Add to Project")

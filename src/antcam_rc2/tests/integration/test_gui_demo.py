@@ -21,6 +21,8 @@ def offscreen_qt() -> Iterator[None]:
 
 def _demo_flow(application, controller, sample_path: Path, depth: float) -> int:
     """Replicate the ``gui-demo`` preload: project + geometry + operations + plan."""
+    from PySide6.QtCore import QEventLoop
+
     from antcam_rc2.__main__ import _add_demo_operations
     from antcam_rc2.core.io import import_file
     from antcam_rc2.core.project.models import Stock
@@ -38,7 +40,13 @@ def _demo_flow(application, controller, sample_path: Path, depth: float) -> int:
             material_id="aluminum_6061",
         ),
     )
+    # Import geometry asynchronously and wait for it to complete
+    loop = QEventLoop()
+    controller.scene_changed.connect(loop.quit)
     controller.import_geometry(sample_path)
+    # Process events until scene_changed is emitted
+    loop.exec()
+
     project = controller.project
     loaded_scene = controller.scene
     assert project is not None and loaded_scene is not None

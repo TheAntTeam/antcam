@@ -125,18 +125,34 @@ def test_move_operation_by_clamps_and_reorders(ui) -> None:
 def test_toolpath_worker_failure_path(qapp, ui) -> None:
     from pathlib import Path
 
+    from PySide6.QtCore import QEventLoop
+    from PySide6.QtWidgets import QApplication
+
     from antcam_rc2.core.project.models import Stock
 
     core, controller = ui
     controller.new_project(
         "fail", "makera_z1", Stock(width_mm=30, length_mm=20, height_mm=5, material_id="aluminum_6061")
     )
+    # Import geometry asynchronously and wait for it to complete
+    loop = QEventLoop()
+    controller.scene_changed.connect(loop.quit)
     controller.import_geometry(Path(__file__).parent.parent / "data" / "mini_polyline_bulge.dxf")
+    QApplication.processEvents()
+    loop.exec()
+
     # Tapping on Makera Z1 always fails with machine_spindle_sync_required.
     operation_id = controller.add_operation("tapping", tool_id="tap_m3", cooling_id="aerodust")
     controller.update_geometry_refs(operation_id, "0", 0)
 
+    # Generate toolpath asynchronously and wait for it to complete
+    loop = QEventLoop()
+    controller.toolpath_controller.plan_ready.connect(loop.quit)
+    controller.toolpath_controller.plan_failed.connect(loop.quit)
     controller.generate_toolpath()
+    QApplication.processEvents()
+    loop.exec()
+
     assert pump_until(qapp, lambda: controller.last_plan is not None)
     assert controller.last_plan is not None
     assert not controller.last_plan.is_executable

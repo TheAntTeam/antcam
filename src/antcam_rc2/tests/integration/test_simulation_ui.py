@@ -44,16 +44,32 @@ def pump_until(qapp, predicate, timeout_ms: int = 5000) -> bool:
 
 
 def _prepare_plan(controller) -> None:
+    from PySide6.QtCore import QEventLoop
+    from PySide6.QtWidgets import QApplication
+
     from antcam_rc2.core.project.models import OperationParameters, Stock
 
     controller.new_project(
         "sim ui", "makera_z1", Stock(width_mm=30, length_mm=30, height_mm=10, material_id="aluminum_6061")
     )
+    # Import geometry asynchronously and wait for it to complete
+    loop = QEventLoop()
+    controller.scene_changed.connect(loop.quit)
     controller.import_geometry(Path(__file__).parent.parent / "data" / "mini_polyline_bulge.dxf")
+    QApplication.processEvents()
+    loop.exec()
+
     operation_id = controller.add_operation("profiling", tool_id="end_mill_3_175_2f", cooling_id="aerodust")
     controller.update_geometry_refs(operation_id, "0", 0)
     controller.update_operation_parameters(operation_id, OperationParameters(depth_mm=2.0, stepdown_mm=1.0))
+
+    # Generate toolpath asynchronously and wait for it to complete
+    loop = QEventLoop()
+    controller.toolpath_controller.plan_ready.connect(loop.quit)
+    controller.toolpath_controller.plan_failed.connect(loop.quit)
     controller.generate_toolpath()
+    QApplication.processEvents()
+    loop.exec()
 
 
 def test_simulation_panel_runs_and_populates_timeline(qapp, ui) -> None:

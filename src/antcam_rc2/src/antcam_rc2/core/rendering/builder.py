@@ -52,6 +52,130 @@ _ARC_SEGMENTS_PER_PI = 16
 _RENDER_TOLERANCE_MM = 0.02
 
 
+def _stock_corner_bounds(project: Project) -> tuple[float, float, float, float, float, float]:
+    """Return stock corner bounds (min_x, min_y, min_z, max_x, max_y, max_z) respecting Stock.origin.
+    
+    The Stock.position represents different reference points depending on Stock.origin:
+    - CENTER_XY_TOP_Z: position = center XY, top Z
+    - CORNER_XY_TOP_Z: position = corner XY, top Z
+    - CENTER_XY_ZERO_Z: position = center XY, zero Z
+    - CORNER_XY_ZERO_Z: position = corner XY, zero Z
+    """
+    stock = project.stock
+    offset_x = project.wcs.offset_x_mm
+    offset_y = project.wcs.offset_y_mm
+    offset_z = project.wcs.offset_z_mm
+    w = stock.width_mm
+    l = stock.length_mm
+    h = stock.height_mm
+    px = stock.position_x_mm + offset_x
+    py = stock.position_y_mm + offset_y
+    pz = stock.position_z_mm + offset_z
+    
+    if stock.origin.value == "center_xy_top_z":
+        # Position is center XY, top Z
+        min_x = px - w / 2.0
+        min_y = py - l / 2.0
+        min_z = pz - h
+        max_x = px + w / 2.0
+        max_y = py + l / 2.0
+        max_z = pz
+    elif stock.origin.value == "corner_xy_top_z":
+        # Position is corner XY, top Z
+        min_x = px
+        min_y = py
+        min_z = pz - h
+        max_x = px + w
+        max_y = py + l
+        max_z = pz
+    elif stock.origin.value == "center_xy_zero_z":
+        # Position is center XY, zero Z
+        min_x = px - w / 2.0
+        min_y = py - l / 2.0
+        min_z = pz
+        max_x = px + w / 2.0
+        max_y = py + l / 2.0
+        max_z = pz + h
+    else:  # corner_xy_zero_z
+        # Position is corner XY, zero Z
+        min_x = px
+        min_y = py
+        min_z = pz
+        max_x = px + w
+        max_y = py + l
+        max_z = pz + h
+    
+    return (min_x, min_y, min_z, max_x, max_y, max_z)
+
+
+def _stock_center_xy(project: Project) -> tuple[float, float]:
+    """Return stock center XY respecting Stock.origin."""
+    stock = project.stock
+    offset_x = project.wcs.offset_x_mm
+    offset_y = project.wcs.offset_y_mm
+    w = stock.width_mm
+    l = stock.length_mm
+    px = stock.position_x_mm + offset_x
+    py = stock.position_y_mm + offset_y
+    
+    if stock.origin.value in ("center_xy_top_z", "center_xy_zero_z"):
+        # Position is center XY
+        return (px, py)
+    else:
+        # Position is corner XY
+        return (px + w / 2.0, py + l / 2.0)
+
+
+def _stock_origin_corner(project: Project) -> tuple[float, float, float]:
+    """Return the stock origin corner (where the red triad should be drawn) respecting Stock.origin.
+    
+    The origin corner is the corner that represents the stock's origin as defined by Stock.origin:
+    - CENTER_XY_TOP_Z: position=center XY, top Z → origin at (-w/2, -l/2, pz + h/2)
+    - CORNER_XY_TOP_Z: position=corner XY, top Z → origin at (px, py, pz)
+    - CENTER_XY_ZERO_Z: position=center XY, zero Z → origin at (-w/2, -l/2, pz - h/2)
+    - CORNER_XY_ZERO_Z: position=corner XY, zero Z → origin at (px, py, pz)
+    """
+    stock = project.stock
+    offset_x = project.wcs.offset_x_mm
+    offset_y = project.wcs.offset_y_mm
+    offset_z = project.wcs.offset_z_mm
+    w = stock.width_mm
+    l = stock.length_mm
+    h = stock.height_mm
+    px = stock.position_x_mm + offset_x
+    py = stock.position_y_mm + offset_y
+    pz = stock.position_z_mm + offset_z
+    
+    if stock.origin.value in ("center_xy_top_z", "corner_xy_top_z"):
+        # Origin is at TOP in Z (max_z)
+        if stock.origin.value in ("center_xy_top_z", "center_xy_zero_z"):
+            # Position is center XY
+            ox = px - w / 2.0
+            oy = py - l / 2.0
+        else:
+            # Position is corner XY
+            ox = px
+            oy = py
+        # For TOP_Z variants, origin is at top of stock
+        if stock.origin.value == "center_xy_top_z":
+            oz = pz + h / 2.0
+        else:  # corner_xy_top_z
+            oz = pz
+    else:  # zero_z variants
+        # Origin is at BOTTOM in Z (min_z)
+        if stock.origin.value in ("center_xy_zero_z", "corner_xy_zero_z"):
+            if stock.origin.value == "center_xy_zero_z":
+                # Position is center XY, zero Z
+                ox = px - w / 2.0
+                oy = py - l / 2.0
+            else:  # corner_xy_zero_z
+                ox = px
+                oy = py
+            oz = pz - h / 2.0 if stock.origin.value == "center_xy_zero_z" else pz
+    
+    return (ox, oy, oz)
+
+
 @lru_cache(maxsize=32)
 def _load_fixture_mesh(mesh_path: str, mtime: float) -> tuple[tuple[float, ...], tuple[int, ...]] | None:
     """Load and cache fixture mesh data (vertices, triangles) from a STEP/STL file.
@@ -161,13 +285,15 @@ def setup_to_scene(
     offset_y = project.wcs.offset_y_mm
     offset_z = project.wcs.offset_z_mm
 
+    # Compute stock bounds respecting Stock.origin
+    min_x, min_y, min_z, max_x, max_y, max_z = _stock_corner_bounds(project)
     stock_box = RenderBox(
-        min_x=stock.position_x_mm + offset_x,
-        min_y=stock.position_y_mm + offset_y,
-        min_z=stock.position_z_mm + offset_z,
-        max_x=stock.position_x_mm + offset_x + stock.width_mm,
-        max_y=stock.position_y_mm + offset_y + stock.length_mm,
-        max_z=stock.position_z_mm + offset_z + stock.height_mm,
+        min_x=min_x,
+        min_y=min_y,
+        min_z=min_z,
+        max_x=max_x,
+        max_y=max_y,
+        max_z=max_z,
     )
     logger.info(f"--- STOCK RENDERBOX CALCULATED ---")
     logger.info(f"  min: ({stock_box.min_x:.3f}, {stock_box.min_y:.3f}, {stock_box.min_z:.3f})")
@@ -301,38 +427,41 @@ def setup_to_scene(
 
     logger.info(f"--- PROCESSING MACHINE WORK AREA ---")
     if machine is not None:
+        # Work area is defined in machine coordinates, offset by WCS
         work_area = RenderBox(
-            min_x=0.0,
-            min_y=0.0,
-            min_z=0.0,
-            max_x=machine.work_area_x_mm,
-            max_y=machine.work_area_y_mm,
-            max_z=machine.work_area_z_mm,
+            min_x=offset_x,
+            min_y=offset_y,
+            min_z=offset_z,
+            max_x=offset_x + machine.work_area_x_mm,
+            max_y=offset_y + machine.work_area_y_mm,
+            max_z=offset_z + machine.work_area_z_mm,
         )
         logger.info(f"  Machine: {machine.id}")
-        logger.info(f"  Work area: min=(0,0,0) max=({machine.work_area_x_mm}, {machine.work_area_y_mm}, {machine.work_area_z_mm})")
+        logger.info(f"  Work area: min=({offset_x:.3f},{offset_y:.3f},{offset_z:.3f}) max=({offset_x + machine.work_area_x_mm:.3f},{offset_y + machine.work_area_y_mm:.3f},{offset_z + machine.work_area_z_mm:.3f})")
         logger.info(f"  Creating WORK_AREA BOX_OUTLINE: color={work_area_color}, width=1.0px")
         nodes.append(RenderNode(kind=NodeKind.BOX_OUTLINE, box=work_area, color=work_area_color, width_px=1.0))
     else:
         logger.info("  No machine selected, skipping work area")
 
-    logger.info(f"--- CREATING ORIGIN AXES ---")
+    # Origin axes at stock origin corner (respecting Stock.origin)
     axis_length = max(5.0, min(stock.width_mm, stock.length_mm, stock.height_mm) * 0.25)
+    origin_x, origin_y, origin_z = _stock_origin_corner(project)
+    logger.info(f"--- CREATING ORIGIN AXES ---")
     logger.info(f"  Axis length: {axis_length:.3f} (25% of min stock dimension, min 5mm)")
-    logger.info(f"  Origin (WCS): ({offset_x}, {offset_y}, {offset_z})")
+    logger.info(f"  Origin (stock origin corner): ({origin_x:.3f}, {origin_y:.3f}, {origin_z:.3f})")
     logger.info(f"  Origin axes color: {origin_color}")
     for axis in range(3):
         direction = [0.0, 0.0, 0.0]
         direction[axis] = axis_length
         axis_name = ['X', 'Y', 'Z'][axis]
-        logger.info(f"  Axis {axis_name}: ({offset_x}, {offset_y}, {offset_z}) -> ({offset_x + direction[0]}, {offset_y + direction[1]}, {offset_z + direction[2]})")
+        logger.info(f"  Axis {axis_name}: ({origin_x:.3f}, {origin_y:.3f}, {origin_z:.3f}) -> ({origin_x + direction[0]:.3f}, {origin_y + direction[1]:.3f}, {origin_z + direction[2]:.3f})")
         nodes.append(
             RenderNode(
                 kind=NodeKind.LINE_STRIP,
                 points=flat_points(
                     [
-                        (offset_x, offset_y, offset_z),
-                        (offset_x + direction[0], offset_y + direction[1], offset_z + direction[2]),
+                        (origin_x, origin_y, origin_z),
+                        (origin_x + direction[0], origin_y + direction[1], origin_z + direction[2]),
                     ]
                 ),
                 color=origin_color,
