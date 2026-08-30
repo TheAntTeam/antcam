@@ -54,7 +54,7 @@ _RENDER_TOLERANCE_MM = 0.02
 
 def _stock_corner_bounds(project: Project) -> tuple[float, float, float, float, float, float]:
     """Return stock corner bounds (min_x, min_y, min_z, max_x, max_y, max_z) respecting Stock.origin.
-    
+
     The Stock.position represents different reference points depending on Stock.origin:
     - CENTER_XY_TOP_Z: position = center XY, top Z
     - CORNER_XY_TOP_Z: position = corner XY, top Z
@@ -71,7 +71,7 @@ def _stock_corner_bounds(project: Project) -> tuple[float, float, float, float, 
     px = stock.position_x_mm + offset_x
     py = stock.position_y_mm + offset_y
     pz = stock.position_z_mm + offset_z
-    
+
     if stock.origin.value == "center_xy_top_z":
         # Position is center XY, top Z
         min_x = px - w / 2.0
@@ -104,7 +104,7 @@ def _stock_corner_bounds(project: Project) -> tuple[float, float, float, float, 
         max_x = px + w
         max_y = py + l
         max_z = pz + h
-    
+
     return (min_x, min_y, min_z, max_x, max_y, max_z)
 
 
@@ -117,7 +117,7 @@ def _stock_center_xy(project: Project) -> tuple[float, float]:
     l = stock.length_mm
     px = stock.position_x_mm + offset_x
     py = stock.position_y_mm + offset_y
-    
+
     if stock.origin.value in ("center_xy_top_z", "center_xy_zero_z"):
         # Position is center XY
         return (px, py)
@@ -128,7 +128,7 @@ def _stock_center_xy(project: Project) -> tuple[float, float]:
 
 def _stock_origin_corner(project: Project) -> tuple[float, float, float]:
     """Return the stock origin corner (where the red triad should be drawn) respecting Stock.origin.
-    
+
     The origin corner is the corner that represents the stock's origin as defined by Stock.origin:
     - CENTER_XY_TOP_Z: position=center XY, top Z → origin at (-w/2, -l/2, pz + h/2)
     - CORNER_XY_TOP_Z: position=corner XY, top Z → origin at (px, py, pz)
@@ -145,7 +145,7 @@ def _stock_origin_corner(project: Project) -> tuple[float, float, float]:
     px = stock.position_x_mm + offset_x
     py = stock.position_y_mm + offset_y
     pz = stock.position_z_mm + offset_z
-    
+
     if stock.origin.value in ("center_xy_top_z", "corner_xy_top_z"):
         # Origin is at TOP in Z (max_z)
         if stock.origin.value in ("center_xy_top_z", "center_xy_zero_z"):
@@ -172,7 +172,7 @@ def _stock_origin_corner(project: Project) -> tuple[float, float, float]:
                 ox = px
                 oy = py
             oz = pz - h / 2.0 if stock.origin.value == "center_xy_zero_z" else pz
-    
+
     return (ox, oy, oz)
 
 
@@ -265,20 +265,21 @@ def setup_to_scene(
     relative mesh paths are resolved against it.
     """
     import logging
+
     logger = logging.getLogger(__name__)
-    
-    logger.info(f"=== SETUP_TO_SCENE START ===")
+
+    logger.info("=== SETUP_TO_SCENE START ===")
     logger.info(f"Project: {project.name} (id={project.id})")
     logger.info(f"Machine: {machine.id if machine else 'None'}")
     logger.info(f"WCS offsets: x={project.wcs.offset_x_mm}, y={project.wcs.offset_y_mm}, z={project.wcs.offset_z_mm}")
-    
+
     stock = project.stock
-    logger.info(f"--- STOCK DATA FROM CORE ---")
+    logger.info("--- STOCK DATA FROM CORE ---")
     logger.info(f"  Stock ID: {stock.material_id}")
     logger.info(f"  Position (raw): x={stock.position_x_mm}, y={stock.position_y_mm}, z={stock.position_z_mm}")
     logger.info(f"  Dimensions: width={stock.width_mm}, length={stock.length_mm}, height={stock.height_mm}")
     logger.info(f"  Origin: {stock.origin}")
-    
+
     nodes: list[RenderNode] = []
     meshes: list[RenderMesh] = []
     offset_x = project.wcs.offset_x_mm
@@ -295,24 +296,24 @@ def setup_to_scene(
         max_y=max_y,
         max_z=max_z,
     )
-    logger.info(f"--- STOCK RENDERBOX CALCULATED ---")
+    logger.info("--- STOCK RENDERBOX CALCULATED ---")
     logger.info(f"  min: ({stock_box.min_x:.3f}, {stock_box.min_y:.3f}, {stock_box.min_z:.3f})")
     logger.info(f"  max: ({stock_box.max_x:.3f}, {stock_box.max_y:.3f}, {stock_box.max_z:.3f})")
     logger.info(f"  center: ({stock_box.center[0]:.3f}, {stock_box.center[1]:.3f}, {stock_box.center[2]:.3f})")
     logger.info(f"  size: ({stock_box.width:.3f}, {stock_box.height:.3f}, {stock_box.depth:.3f})")
     logger.info(f"  is_empty: {stock_box.is_empty}")
-    
-    logger.info(f"--- CREATING STOCK SOLID_BOX NODE ---")
-    logger.info(f"  NodeKind: SOLID_BOX")
+
+    logger.info("--- CREATING STOCK SOLID_BOX NODE ---")
+    logger.info("  NodeKind: SOLID_BOX")
     logger.info(f"  Color: {stock_color}")
     nodes.append(RenderNode(kind=NodeKind.SOLID_BOX, box=stock_box, color=stock_color))
-    logger.info(f"  Node created, picking_id=0")
-    
-    logger.info(f"--- CREATING STOCK BOX_OUTLINE NODE ---")
+    logger.info("  Node created, picking_id=0")
+
+    logger.info("--- CREATING STOCK BOX_OUTLINE NODE ---")
     edge_color = stock_edge_color or _opaque(stock_color)
-    logger.info(f"  NodeKind: BOX_OUTLINE")
+    logger.info("  NodeKind: BOX_OUTLINE")
     logger.info(f"  Color: {edge_color}")
-    logger.info(f"  Width: 1.5px")
+    logger.info("  Width: 1.5px")
     nodes.append(
         RenderNode(
             kind=NodeKind.BOX_OUTLINE,
@@ -321,12 +322,14 @@ def setup_to_scene(
             width_px=1.5,
         )
     )
-    logger.info(f"  Node created, picking_id=0")
+    logger.info("  Node created, picking_id=0")
 
     logger.info(f"--- PROCESSING FIXTURES ({len(project.fixtures)} fixtures) ---")
     for fixture in project.fixtures:
         logger.info(f"  Fixture: {fixture.name} (id={fixture.id}, kind={fixture.kind})")
-        logger.info(f"    Position (raw): x={fixture.position_x_mm}, y={fixture.position_y_mm}, z={fixture.position_z_mm}")
+        logger.info(
+            f"    Position (raw): x={fixture.position_x_mm}, y={fixture.position_y_mm}, z={fixture.position_z_mm}"
+        )
         logger.info(f"    Dimensions: w={fixture.width_mm}, l={fixture.length_mm}, h={fixture.height_mm}")
         if fixture.kind == FixtureKind.SCREW:
             # Render screw as cylinder
@@ -381,7 +384,9 @@ def setup_to_scene(
                 max_y=fixture.position_y_mm + offset_y + fixture.length_mm,
                 max_z=fixture.position_z_mm + offset_z + fixture.height_mm,
             )
-            logger.info(f"    Fixture RenderBox: min=({fixture_box.min_x:.3f}, {fixture_box.min_y:.3f}, {fixture_box.min_z:.3f}) max=({fixture_box.max_x:.3f}, {fixture_box.max_y:.3f}, {fixture_box.max_z:.3f})")
+            logger.info(
+                f"    Fixture RenderBox: min=({fixture_box.min_x:.3f}, {fixture_box.min_y:.3f}, {fixture_box.min_z:.3f}) max=({fixture_box.max_x:.3f}, {fixture_box.max_y:.3f}, {fixture_box.max_z:.3f})"
+            )
             if fixture.mesh_path:
                 mesh_path = PathLib(fixture.mesh_path)
                 # Resolve relative paths against fixture library base
@@ -407,14 +412,18 @@ def setup_to_scene(
                                     picking_id=abs(hash(str(mesh_path))) & 0xFFFFFFFF,
                                 )
                             )
-                            logger.info(f"    Created FIXTURE mesh from file: {mesh_path}, vertices={len(vertices)//3}, triangles={len(triangles)//3}, color={fixture_mesh_color}")
+                            logger.info(
+                                f"    Created FIXTURE mesh from file: {mesh_path}, vertices={len(vertices) // 3}, triangles={len(triangles) // 3}, color={fixture_mesh_color}"
+                            )
                             continue  # Skip box fallback
                     except Exception as e:
                         # Fall through to box rendering on import failure
                         logger.warning(f"    Failed to load fixture mesh from {mesh_path}: {e}, falling back to box")
                         pass
             # Box fallback (or mesh import failed)
-            logger.info(f"    Creating FIXTURE box fallback: SOLID_BOX color={fixture_color}, BOX_OUTLINE color={fixture_outline_color}, width=1.0px")
+            logger.info(
+                f"    Creating FIXTURE box fallback: SOLID_BOX color={fixture_color}, BOX_OUTLINE color={fixture_outline_color}, width=1.0px"
+            )
             nodes.append(RenderNode(kind=NodeKind.SOLID_BOX, box=fixture_box, color=fixture_color))
             nodes.append(
                 RenderNode(
@@ -425,7 +434,7 @@ def setup_to_scene(
                 )
             )
 
-    logger.info(f"--- PROCESSING MACHINE WORK AREA ---")
+    logger.info("--- PROCESSING MACHINE WORK AREA ---")
     if machine is not None:
         # Work area is defined in machine coordinates, offset by WCS
         work_area = RenderBox(
@@ -437,7 +446,9 @@ def setup_to_scene(
             max_z=offset_z + machine.work_area_z_mm,
         )
         logger.info(f"  Machine: {machine.id}")
-        logger.info(f"  Work area: min=({offset_x:.3f},{offset_y:.3f},{offset_z:.3f}) max=({offset_x + machine.work_area_x_mm:.3f},{offset_y + machine.work_area_y_mm:.3f},{offset_z + machine.work_area_z_mm:.3f})")
+        logger.info(
+            f"  Work area: min=({offset_x:.3f},{offset_y:.3f},{offset_z:.3f}) max=({offset_x + machine.work_area_x_mm:.3f},{offset_y + machine.work_area_y_mm:.3f},{offset_z + machine.work_area_z_mm:.3f})"
+        )
         logger.info(f"  Creating WORK_AREA BOX_OUTLINE: color={work_area_color}, width=1.0px")
         nodes.append(RenderNode(kind=NodeKind.BOX_OUTLINE, box=work_area, color=work_area_color, width_px=1.0))
     else:
@@ -446,15 +457,17 @@ def setup_to_scene(
     # Origin axes at stock origin corner (respecting Stock.origin)
     axis_length = max(5.0, min(stock.width_mm, stock.length_mm, stock.height_mm) * 0.25)
     origin_x, origin_y, origin_z = _stock_origin_corner(project)
-    logger.info(f"--- CREATING ORIGIN AXES ---")
+    logger.info("--- CREATING ORIGIN AXES ---")
     logger.info(f"  Axis length: {axis_length:.3f} (25% of min stock dimension, min 5mm)")
     logger.info(f"  Origin (stock origin corner): ({origin_x:.3f}, {origin_y:.3f}, {origin_z:.3f})")
     logger.info(f"  Origin axes color: {origin_color}")
     for axis in range(3):
         direction = [0.0, 0.0, 0.0]
         direction[axis] = axis_length
-        axis_name = ['X', 'Y', 'Z'][axis]
-        logger.info(f"  Axis {axis_name}: ({origin_x:.3f}, {origin_y:.3f}, {origin_z:.3f}) -> ({origin_x + direction[0]:.3f}, {origin_y + direction[1]:.3f}, {origin_z + direction[2]:.3f})")
+        axis_name = ["X", "Y", "Z"][axis]
+        logger.info(
+            f"  Axis {axis_name}: ({origin_x:.3f}, {origin_y:.3f}, {origin_z:.3f}) -> ({origin_x + direction[0]:.3f}, {origin_y + direction[1]:.3f}, {origin_z + direction[2]:.3f})"
+        )
         nodes.append(
             RenderNode(
                 kind=NodeKind.LINE_STRIP,
@@ -468,7 +481,7 @@ def setup_to_scene(
                 width_px=2.0,
             )
         )
-    
+
     logger.info(f"=== SETUP_TO_SCENE END: {len(nodes)} nodes, {len(meshes)} meshes ===")
     return RenderScene(nodes=tuple(nodes), meshes=tuple(meshes))
 
@@ -742,8 +755,25 @@ def _opaque(color: RGBA) -> RGBA:
     return (color[0], color[1], color[2], 1.0)
 
 
-def solid_to_scene(scene: SolidScene) -> RenderScene:
-    """Build a render graph with one :class:`RenderMesh` per solid body."""
+def solid_to_scene(scene: SolidScene, placement: object | None = None) -> RenderScene:
+    """Build a render graph with one :class:`RenderMesh` per solid body.
+
+    If ``placement`` (SolidPlacement) is provided, the scene is transformed
+    via ``apply_placement`` before flattening — the raw ``SolidScene`` stays
+    immutable.
+    """
+    if placement is not None:
+        # Lazy import to avoid circular dependency (models -> geometry3d).
+        from antcam_rc2.core.project.solid_placement import apply_placement  # noqa: WPS433
+
+        # Only apply if placement is a SolidPlacement; pass-through otherwise.
+        try:
+            from antcam_rc2.core.project.models import SolidPlacement  # noqa: WPS433
+
+            if isinstance(placement, SolidPlacement):
+                scene = apply_placement(scene, placement)
+        except Exception:
+            pass
     meshes: list[RenderMesh] = []
     for body_index, body in enumerate(scene.bodies):
         vertices = tuple(float(value) for value in body.mesh.vertices.reshape(-1).tolist())

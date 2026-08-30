@@ -20,51 +20,78 @@ _PICK_STRIDE = 7  # x y z  id_r id_g id_b id_a
 # Digit segments for 0-9 using a simple 5x7 grid (each digit is 5 wide x 7 high)
 # Each segment is ((x1, y1), (x2, y2)) in local digit coordinates (0..5, 0..7)
 _DIGIT_SEGMENTS = {
-    '0': [
-        (0, 0, 5, 0), (5, 0, 5, 7), (5, 7, 0, 7), (0, 7, 0, 0),
-        (0, 0, 0, 7), (5, 0, 5, 7),  # verticals
+    "0": [
+        (0, 0, 5, 0),
+        (5, 0, 5, 7),
+        (5, 7, 0, 7),
+        (0, 7, 0, 0),
+        (0, 0, 0, 7),
+        (5, 0, 5, 7),  # verticals
     ],
-    '1': [
-        (3, 0, 3, 7), (5, 0, 3, 0),  # main vertical + top
+    "1": [
+        (3, 0, 3, 7),
+        (5, 0, 3, 0),  # main vertical + top
     ],
-    '2': [
-        (0, 0, 5, 0), (5, 0, 5, 3.5), (5, 3.5, 0, 3.5),
-        (0, 3.5, 0, 7), (0, 7, 5, 7),
+    "2": [
+        (0, 0, 5, 0),
+        (5, 0, 5, 3.5),
+        (5, 3.5, 0, 3.5),
+        (0, 3.5, 0, 7),
+        (0, 7, 5, 7),
     ],
-    '3': [
-        (0, 0, 5, 0), (5, 0, 5, 3.5), (5, 3.5, 0, 3.5),
-        (5, 3.5, 5, 7), (0, 7, 5, 7),
+    "3": [
+        (0, 0, 5, 0),
+        (5, 0, 5, 3.5),
+        (5, 3.5, 0, 3.5),
+        (5, 3.5, 5, 7),
+        (0, 7, 5, 7),
     ],
-    '4': [
-        (0, 0, 0, 3.5), (0, 3.5, 5, 3.5), (5, 0, 5, 7),
+    "4": [
+        (0, 0, 0, 3.5),
+        (0, 3.5, 5, 3.5),
+        (5, 0, 5, 7),
     ],
-    '5': [
-        (5, 0, 0, 0), (0, 0, 0, 3.5), (0, 3.5, 5, 3.5),
-        (5, 3.5, 5, 7), (5, 7, 0, 7),
+    "5": [
+        (5, 0, 0, 0),
+        (0, 0, 0, 3.5),
+        (0, 3.5, 5, 3.5),
+        (5, 3.5, 5, 7),
+        (5, 7, 0, 7),
     ],
-    '6': [
-        (5, 0, 0, 0), (0, 0, 0, 7), (0, 7, 5, 7),
-        (5, 7, 5, 3.5), (5, 3.5, 0, 3.5),
+    "6": [
+        (5, 0, 0, 0),
+        (0, 0, 0, 7),
+        (0, 7, 5, 7),
+        (5, 7, 5, 3.5),
+        (5, 3.5, 0, 3.5),
     ],
-    '7': [
-        (0, 0, 5, 0), (5, 0, 5, 7),
+    "7": [
+        (0, 0, 5, 0),
+        (5, 0, 5, 7),
     ],
-    '8': [
-        (0, 0, 5, 0), (5, 0, 5, 7), (5, 7, 0, 7), (0, 7, 0, 0),
+    "8": [
+        (0, 0, 5, 0),
+        (5, 0, 5, 7),
+        (5, 7, 0, 7),
+        (0, 7, 0, 0),
         (0, 3.5, 5, 3.5),
     ],
-    '9': [
-        (0, 0, 5, 0), (5, 0, 5, 7), (5, 7, 0, 7), (0, 7, 0, 3.5),
+    "9": [
+        (0, 0, 5, 0),
+        (5, 0, 5, 7),
+        (5, 7, 0, 7),
+        (0, 7, 0, 3.5),
         (0, 3.5, 5, 3.5),
     ],
-    '-': [
+    "-": [
         (0, 3.5, 5, 3.5),
     ],
 }
 
 
-def _digit_segments_to_vertices(digit: str, origin_x: float, origin_y: float, z: float,
-                                scale: float, color: tuple) -> np.ndarray:
+def _digit_segments_to_vertices(
+    digit: str, origin_x: float, origin_y: float, z: float, scale: float, color: tuple
+) -> np.ndarray:
     """Convert digit segments to line vertices."""
     if digit not in _DIGIT_SEGMENTS:
         return np.empty((0, _LINE_STRIDE), dtype=np.float32)
@@ -87,23 +114,23 @@ def _digit_segments_to_vertices(digit: str, origin_x: float, origin_y: float, z:
     return buffer
 
 
-def _number_to_digit_vertices(number: float, origin_x: float, origin_y: float, z: float,
-                               scale: float, color: tuple, decimal_places: int = 0) -> np.ndarray:
+def _number_to_digit_vertices(
+    number: float, origin_x: float, origin_y: float, z: float, scale: float, color: tuple, decimal_places: int = 0
+) -> np.ndarray:
     """Generate vertices for a number as digit line segments."""
     if decimal_places > 0:
         s = f"{number:.{decimal_places}f}"
     else:
         s = f"{int(round(number))}"
-    
+
     digit_width = 5 * scale
     digit_spacing = 6 * scale
     all_vertices = []
-    
+
     for i, ch in enumerate(s):
         x_offset = i * digit_spacing
-        all_vertices.append(_digit_segments_to_vertices(
-            ch, origin_x + x_offset, origin_y, z, scale, color))
-    
+        all_vertices.append(_digit_segments_to_vertices(ch, origin_x + x_offset, origin_y, z, scale, color))
+
     if not all_vertices:
         return np.empty((0, _LINE_STRIDE), dtype=np.float32)
     return np.concatenate([v for v in all_vertices if v.size > 0], axis=0)
@@ -184,8 +211,14 @@ def grid_vertices(box, spacing_mm: float, *, major_spacing_mm: float | None = No
     return buffer
 
 
-def grid_label_vertices(box, spacing_mm: float, *, major_spacing_mm: float | None = None,
-                         label_scale_mm: float = 2.0, label_color: tuple = (0.6, 0.65, 0.7, 0.8)) -> np.ndarray:
+def grid_label_vertices(
+    box,
+    spacing_mm: float,
+    *,
+    major_spacing_mm: float | None = None,
+    label_scale_mm: float = 2.0,
+    label_color: tuple = (0.6, 0.65, 0.7, 0.8),
+) -> np.ndarray:
     """Build line vertices for coordinate labels on major grid lines.
 
     Labels are placed at the intersection of major grid lines with the grid boundary.
@@ -267,26 +300,41 @@ def axes_vertices(length_mm: float = 20.0) -> np.ndarray:
     # Axis lines (origin to tip)
     vertices = [
         # X axis (red)
-        (0.0, 0.0, 0.0), (length_mm, 0.0, 0.0),
+        (0.0, 0.0, 0.0),
+        (length_mm, 0.0, 0.0),
         # X arrow head
-        (length_mm, 0.0, 0.0), (length_mm - 2.0, 1.0, 0.0),
-        (length_mm, 0.0, 0.0), (length_mm - 2.0, -1.0, 0.0),
-        (length_mm, 0.0, 0.0), (length_mm - 2.0, 0.0, 1.0),
-        (length_mm, 0.0, 0.0), (length_mm - 2.0, 0.0, -1.0),
+        (length_mm, 0.0, 0.0),
+        (length_mm - 2.0, 1.0, 0.0),
+        (length_mm, 0.0, 0.0),
+        (length_mm - 2.0, -1.0, 0.0),
+        (length_mm, 0.0, 0.0),
+        (length_mm - 2.0, 0.0, 1.0),
+        (length_mm, 0.0, 0.0),
+        (length_mm - 2.0, 0.0, -1.0),
         # Y axis (green)
-        (0.0, 0.0, 0.0), (0.0, length_mm, 0.0),
+        (0.0, 0.0, 0.0),
+        (0.0, length_mm, 0.0),
         # Y arrow head
-        (0.0, length_mm, 0.0), (1.0, length_mm - 2.0, 0.0),
-        (0.0, length_mm, 0.0), (-1.0, length_mm - 2.0, 0.0),
-        (0.0, length_mm, 0.0), (0.0, length_mm - 2.0, 1.0),
-        (0.0, length_mm, 0.0), (0.0, length_mm - 2.0, -1.0),
+        (0.0, length_mm, 0.0),
+        (1.0, length_mm - 2.0, 0.0),
+        (0.0, length_mm, 0.0),
+        (-1.0, length_mm - 2.0, 0.0),
+        (0.0, length_mm, 0.0),
+        (0.0, length_mm - 2.0, 1.0),
+        (0.0, length_mm, 0.0),
+        (0.0, length_mm - 2.0, -1.0),
         # Z axis (blue)
-        (0.0, 0.0, 0.0), (0.0, 0.0, length_mm),
+        (0.0, 0.0, 0.0),
+        (0.0, 0.0, length_mm),
         # Z arrow head
-        (0.0, 0.0, length_mm), (1.0, 0.0, length_mm - 2.0),
-        (0.0, 0.0, length_mm), (-1.0, 0.0, length_mm - 2.0),
-        (0.0, 0.0, length_mm), (0.0, 1.0, length_mm - 2.0),
-        (0.0, 0.0, length_mm), (0.0, -1.0, length_mm - 2.0),
+        (0.0, 0.0, length_mm),
+        (1.0, 0.0, length_mm - 2.0),
+        (0.0, 0.0, length_mm),
+        (-1.0, 0.0, length_mm - 2.0),
+        (0.0, 0.0, length_mm),
+        (0.0, 1.0, length_mm - 2.0),
+        (0.0, 0.0, length_mm),
+        (0.0, -1.0, length_mm - 2.0),
     ]
     arr = np.array(vertices, dtype=np.float32)  # (N, 3)
     buffer = np.empty((len(arr), _LINE_STRIDE), dtype=np.float32)

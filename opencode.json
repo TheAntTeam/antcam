@@ -1,0 +1,24 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "shell": "cmd.exe",
+  "instructions": [
+    "AGENTS.md",
+    "src/antcam_rc2/PLAN.md",
+    "src/antcam_rc2/PLAN_FASE_*.md",
+    "src/antcam_rc2/README.md",
+    "src/antcam_rc2/GL_SCENE_FIX.md",
+    "src/antcam_rc2/MOUSE_CONTROLS.md",
+    "src/antcam_rc2/PLAN_PRO_FIXTURE.md"
+  ],
+  "permission": {
+    "bash": {
+      "*": "allow",
+      "git commit*": "ask",
+      "git push*": "ask",
+      "git branch*": "ask",
+      "git checkout -b*": "ask",
+      "git switch -c*": "ask",
+      "git tag*": "ask"
+    }
+  }
+}

@@ -49,17 +49,19 @@ def create_application():  # noqa: ANN201 - return type is QApplication (lazy Qt
 def main() -> int:
     """Bootstrap the Qt application with the full main window."""
     from PySide6.QtWidgets import QApplication
+
     from antcam_rc2.core.project.models import Stock, StockOrigin
 
     core = Application()
     try:
         app = QApplication.instance() or create_application()
         controller = ProjectController(core)
-        
+
         # Create window FIRST so it can receive scene_changed signals
         from antcam_rc2.frontends.pyside.app_window import MainWindow
+
         window = MainWindow(controller)
-        
+
         # Then create the default project (window is now listening to scene_changed)
         controller.new_project(
             "New Project",
@@ -72,7 +74,7 @@ def main() -> int:
                 origin=StockOrigin.CORNER_XY_TOP_Z,
             ),
         )
-        
+
         window.show()
         return app.exec()
     finally:

@@ -21,6 +21,7 @@ from PySide6.QtOpenGL import (
 
 from antcam_rc2.core.rendering.scene_graph import RenderBox, RenderScene
 from antcam_rc2.frontends.pyside.viewport.buffers import (
+    axes_vertices,
     decode_picking_id,
     grid_vertices,
     ground_vertices,
@@ -28,7 +29,6 @@ from antcam_rc2.frontends.pyside.viewport.buffers import (
     mesh_vertices,
     solid_vertices,
     unit_box_mesh,
-    axes_vertices,
 )
 from antcam_rc2.frontends.pyside.viewport.camera import OrbitCamera
 from antcam_rc2.frontends.pyside.viewport.gl_log import gl_log

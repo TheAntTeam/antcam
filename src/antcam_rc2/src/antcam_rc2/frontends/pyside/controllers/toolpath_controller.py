@@ -17,6 +17,11 @@ from antcam_rc2.core.project.models import Project
 from antcam_rc2.core.toolpath.models import ToolpathPlan
 from antcam_rc2.core.toolpath.settings import PlanningSettings
 
+try:
+    from antcam_rc2.core.geometry3d.scene import SolidScene
+except ImportError:  # pragma: no cover
+    SolidScene = object  # type: ignore[misc,assignment]
+
 
 class _SignalCarrier(QObject):
     """Thread-safe delivery of worker results to the main thread."""
@@ -35,6 +40,7 @@ class _PlanRunnable(QRunnable):
         scene: GeometryScene,
         settings: PlanningSettings,
         carrier: _SignalCarrier,
+        solid_scene: SolidScene | None = None,
     ) -> None:
         super().__init__()
         self.setAutoDelete(True)
@@ -43,10 +49,13 @@ class _PlanRunnable(QRunnable):
         self._scene = scene
         self._settings = settings
         self._carrier = carrier
+        self._solid_scene = solid_scene
 
     def run(self) -> None:
         try:
-            plan = self._application.toolpath_service.plan_snapshot(self._project, self._scene, self._settings)
+            plan = self._application.toolpath_service.plan_snapshot(
+                self._project, self._scene, self._settings, solid_scene=self._solid_scene
+            )
         except Exception as exc:  # noqa: BLE001 - reported to the UI as a failure
             self._carrier.failed.emit(f"{type(exc).__name__}: {exc}")
             return
@@ -70,7 +79,13 @@ class ToolpathController(QObject):
     def is_busy(self) -> bool:
         return self._busy
 
-    def generate(self, project_id: str, scene: GeometryScene, settings: PlanningSettings | None = None) -> None:
+    def generate(
+        self,
+        project_id: str,
+        scene: GeometryScene,
+        settings: PlanningSettings | None = None,
+        solid_scene: SolidScene | None = None,
+    ) -> None:
         """Start background planning; emits ``plan_ready`` or ``plan_failed``."""
         if self._busy:
             return
@@ -79,7 +94,7 @@ class ToolpathController(QObject):
         carrier = _SignalCarrier(self)
         carrier.finished.connect(self._on_finished)
         carrier.failed.connect(self._on_failed)
-        runnable = _PlanRunnable(self._application, project, scene, settings, carrier)
+        runnable = _PlanRunnable(self._application, project, scene, settings, carrier, solid_scene)
         self._busy = True
         self.busy_changed.emit(True)
         self._pool.start(runnable)

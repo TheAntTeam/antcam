@@ -94,22 +94,39 @@ class GLViewport(QOpenGLWidget):
             self.update()
             self.view_changed.emit()
 
-    def fit_to_stock(self, stock: Stock | None) -> None:
-        """Frame the stock bounding box."""
+    def fit_to_stock(self, stock: Stock | None, wcs=None) -> None:
+        """Frame the stock bounding box (WCS-aware, respects StockOrigin)."""
         if stock is None:
             return
         from antcam_rc2.core.rendering.builder import RenderBox
 
-        # Get WCS offset from the project (simplified - assume project available)
-        # For now, use stock position directly
-        box = RenderBox(
-            min_x=stock.position_x_mm,
-            min_y=stock.position_y_mm,
-            min_z=stock.position_z_mm,
-            max_x=stock.position_x_mm + stock.width_mm,
-            max_y=stock.position_y_mm + stock.length_mm,
-            max_z=stock.position_z_mm + stock.height_mm,
-        )
+        ox = 0.0 if wcs is None else float(wcs.offset_x_mm)
+        oy = 0.0 if wcs is None else float(wcs.offset_y_mm)
+        oz = 0.0 if wcs is None else float(wcs.offset_z_mm)
+        px = float(stock.position_x_mm) + ox
+        py = float(stock.position_y_mm) + oy
+        pz = float(stock.position_z_mm) + oz
+        w = float(stock.width_mm)
+        length = float(stock.length_mm)
+        h = float(stock.height_mm)
+        origin = stock.origin.value
+        if origin == "center_xy_top_z":
+            min_x, max_x = px - w / 2.0, px + w / 2.0
+            min_y, max_y = py - length / 2.0, py + length / 2.0
+            min_z, max_z = pz - h, pz
+        elif origin == "corner_xy_top_z":
+            min_x, max_x = px, px + w
+            min_y, max_y = py, py + length
+            min_z, max_z = pz - h, pz
+        elif origin == "center_xy_zero_z":
+            min_x, max_x = px - w / 2.0, px + w / 2.0
+            min_y, max_y = py - length / 2.0, py + length / 2.0
+            min_z, max_z = pz, pz + h
+        else:  # corner_xy_zero_z
+            min_x, max_x = px, px + w
+            min_y, max_y = py, py + length
+            min_z, max_z = pz, pz + h
+        box = RenderBox(min_x=min_x, min_y=min_y, min_z=min_z, max_x=max_x, max_y=max_y, max_z=max_z)
         self._camera.fit_to(box, (self.width(), self.height()))
         self.update()
         self.view_changed.emit()

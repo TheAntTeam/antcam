@@ -107,74 +107,39 @@ class TriMesh(BaseModel):
             face_ids=None if self.face_ids is None else np.asarray(self.face_ids, dtype=np.int32),
         )
 
+    def apply(self, affine: object) -> TriMesh:
+        """Return a new mesh with ``affine`` (Affine3D) applied to vertices."""
+        if self.is_empty:
+            return self
+        # Local import to avoid circular dependency at module load.
+        from antcam_rc2.core.geometry3d.transform import Affine3D  # noqa: WPS433
+
+        if not isinstance(affine, Affine3D):
+            raise TypeError(f"TriMesh.apply expects Affine3D, got {type(affine).__name__}")
+        new_vertices = affine.apply_points(self.vertices)
+        return TriMesh(vertices=new_vertices, faces=self.faces, face_ids=self.face_ids)
+
     def translate(self, dx: float, dy: float, dz: float) -> TriMesh:
         """Return a new mesh translated by (dx, dy, dz)."""
         if self.is_empty:
             return self
-        new_vertices = self.vertices.copy()
-        new_vertices[:, 0] += dx
-        new_vertices[:, 1] += dy
-        new_vertices[:, 2] += dz
-        return TriMesh(
-            vertices=new_vertices,
-            faces=self.faces,
-            face_ids=self.face_ids,
-        )
+        from antcam_rc2.core.geometry3d.transform import Affine3D  # noqa: WPS433
+
+        return self.apply(Affine3D.translate(dx, dy, dz))
 
     def rotate(self, rx: float, ry: float, rz: float, cx: float = 0.0, cy: float = 0.0, cz: float = 0.0) -> TriMesh:
         """Return a new mesh rotated by (rx, ry, rz) degrees around center (cx, cy, cz)."""
         if self.is_empty:
             return self
-        import math
+        from antcam_rc2.core.geometry3d.transform import Affine3D  # noqa: WPS433
 
-        # Convert degrees to radians
-        rx_rad = math.radians(rx)
-        ry_rad = math.radians(ry)
-        rz_rad = math.radians(rz)
-        # Build rotation matrices
-        # Rx
-        cos_x, sin_x = math.cos(rx_rad), math.sin(rx_rad)
-        Rx = np.array(
-            [
-                [1, 0, 0],
-                [0, cos_x, -sin_x],
-                [0, sin_x, cos_x],
-            ],
-            dtype=np.float64,
-        )
-        # Ry
-        cos_y, sin_y = math.cos(ry_rad), math.sin(ry_rad)
-        Ry = np.array(
-            [
-                [cos_y, 0, sin_y],
-                [0, 1, 0],
-                [-sin_y, 0, cos_y],
-            ],
-            dtype=np.float64,
-        )
-        # Rz
-        cos_z, sin_z = math.cos(rz_rad), math.sin(rz_rad)
-        Rz = np.array(
-            [
-                [cos_z, -sin_z, 0],
-                [sin_z, cos_z, 0],
-                [0, 0, 1],
-            ],
-            dtype=np.float64,
-        )
-        # Combined rotation matrix (Z * Y * X order)
-        R = Rz @ Ry @ Rx
+        if cx == 0.0 and cy == 0.0 and cz == 0.0:
+            return self.apply(Affine3D.rotate(rx, ry, rz))
         # Translate to center, rotate, translate back
-        new_vertices = self.vertices.copy()
-        new_vertices[:, 0] -= cx
-        new_vertices[:, 1] -= cy
-        new_vertices[:, 2] -= cz
-        new_vertices = new_vertices @ R.T
-        new_vertices[:, 0] += cx
-        new_vertices[:, 1] += cy
-        new_vertices[:, 2] += cz
-        return TriMesh(
-            vertices=new_vertices,
-            faces=self.faces,
-            face_ids=self.face_ids,
+        return self.apply(
+            Affine3D.chain(
+                Affine3D.translate(cx, cy, cz),
+                Affine3D.rotate(rx, ry, rz),
+                Affine3D.translate(-cx, -cy, -cz),
+            )
         )

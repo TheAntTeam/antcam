@@ -150,6 +150,27 @@ class GeometryRef(_ProjectModel):
     entity_fingerprint: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
 
 
+class SolidPlacement(_ProjectModel):
+    """Non-destructive placement for an imported 3D solid (translation + rotation + uniform scale).
+
+    Applied lazily via ``Affine3D`` at render/toolpath/picking time; the raw
+    ``SolidScene`` stays immutable. ``stock_origin`` records the StockOrigin
+    used to compute the default placement (for audit, not for re-interpretation).
+    """
+
+    translation: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    rotation_deg: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    scale: float = Field(default=1.0, gt=0)
+    stock_origin: StockOrigin = StockOrigin.CENTER_XY_TOP_Z
+
+    @model_validator(mode="after")
+    def _validate_finite(self) -> SolidPlacement:
+        for v in (*self.translation, *self.rotation_deg, self.scale):
+            if not (v == v and abs(v) != float("inf")):  # NaN or Inf check without math import
+                raise ValueError("SolidPlacement values must be finite")
+        return self
+
+
 class SolidBinding(_ProjectModel):
     """Persistent provenance for a transient imported 3D solid scene."""
 
@@ -232,6 +253,8 @@ class Project(_ProjectModel):
     fixtures: tuple[Fixture, ...] = ()
     operations: tuple[Operation, ...] = ()
     geometry_binding: GeometryBinding | None = None
+    solid_binding: SolidBinding | None = None
+    solid_placement: SolidPlacement | None = None
 
     @model_validator(mode="after")
     def _validate_project(self) -> Project:

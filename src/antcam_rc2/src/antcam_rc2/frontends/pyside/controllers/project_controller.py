@@ -27,7 +27,6 @@ from antcam_rc2.core.project.models import (
     OperationType,
     Project,
     Stock,
-    StockOrigin,
 )
 from antcam_rc2.core.project.solid_refs import create_solid_ref
 from antcam_rc2.core.rendering import (
@@ -90,6 +89,12 @@ class ProjectController(QObject):
         # Geometry import signals
         self.geometry_import_controller.geometry_imported.connect(self._on_geometry_imported)
         self.geometry_import_controller.solid_imported.connect(self._on_solid_imported)
+        # Modeless solid placement dialog state (same dialog for import and edit, live preview, viewport navigable)
+        self._solid_dialog = None  # type: ignore[var-annotated]
+        self._solid_dialog_scene: SolidScene | None = None
+        self._solid_dialog_is_import: bool = False
+        self._solid_dialog_prev_scene: SolidScene | None = None
+        self._solid_dialog_prev_project: Project | None = None
         self.geometry_import_controller.fixture_loaded.connect(self._on_fixture_loaded)
         self.geometry_import_controller.import_failed.connect(
             lambda message: self.status_message.emit(f"Import failed: {message}")
@@ -200,67 +205,132 @@ class ProjectController(QObject):
     def _on_solid_imported(self, scene: SolidScene) -> None:
         if self._project is None:
             return
+        # Use the shared modeless placement dialog (same as Edit).
+        # Viewport stays navigable (orbit/pan/zoom) while the dialog is open.
+        self._open_solid_placement_dialog(scene, placement=None, is_import=True)
 
-        # Show positioning dialog
+    def edit_solid_placement(self) -> None:
+        """Open the shared placement dialog for the already-attached solid (modeless, live preview)."""
+        if self._project is None or self._solid_scene is None:
+            self.status_message.emit("No 3D solid to edit")
+            return
+        placement = self._project.solid_placement
+        self._open_solid_placement_dialog(self._solid_scene, placement=placement, is_import=False)
+
+    def _open_solid_placement_dialog(
+        self, scene: SolidScene, *, placement: object | None, is_import: bool
+    ) -> None:
+        from antcam_rc2.core.project.models import SolidPlacement as _SP
+        from antcam_rc2.core.project.solid_placement import apply_placement
         from antcam_rc2.frontends.pyside.dialogs.import_solid_dialog import ImportSolidDialog
 
-        dialog = ImportSolidDialog(self._viewport, scene=scene, stock=self._project.stock)
-        if not dialog.exec():
-            self.status_message.emit("3D solid import cancelled")
+        if self._project is None:
             return
+        # Close previous dialog if still open.
+        if self._solid_dialog is not None:
+            try:
+                self._solid_dialog.close()
+            except Exception:
+                pass
+            self._solid_dialog = None
 
-        # Apply the offset based on the selected origin
-        offset = dialog.result_offset()
-        origin = dialog.result_origin()
-        scene = self._apply_solid_origin_offset(scene, self._project.stock, origin, offset)
+        typed_placement: _SP | None = placement if isinstance(placement, _SP) else None  # type: ignore[assignment]
+        dialog = ImportSolidDialog(
+            self._viewport, scene=scene, stock=self._project.stock, wcs=self._project.wcs, placement=typed_placement
+        )
+        dialog.setModal(False)
+        # Keep viewport navigable; dialog is a separate non-modal window.
+        self._solid_dialog = dialog
+        self._solid_dialog_scene = scene
+        self._solid_dialog_is_import = is_import
+        self._solid_dialog_prev_scene = self._solid_scene
+        self._solid_dialog_prev_project = self._project
 
-        # Store scene and rebuild
-        self._solid_scene = scene
-        self._solid_graph = solid_to_scene(scene)
+        # Show initial placement immediately (live preview without persisting yet).
+        initial = dialog.result_placement()
+        if is_import:
+            self._solid_scene = scene
+        self._solid_graph = solid_to_scene(scene, placement=initial)
         if self._viewport is not None:
-            self._viewport.set_solid_scene(scene)
-        self._rebuild_setup_graph()
+            self._viewport.set_solid_scene(apply_placement(scene, initial))
         self.scene_changed.emit()
-        self.clear_toolpaths()
-        self.status_message.emit(f"Imported 3D {scene.source.path} ({scene.feature_count()} features)")
 
-    def _apply_solid_origin_offset(
-        self,
-        scene: SolidScene,
-        stock: Stock,
-        origin: StockOrigin,
-        offset: tuple[float, float, float],
-    ) -> SolidScene:
-        """Apply the solid position offset relative to the stock origin. Returns translated scene."""
-        ox, oy, oz = offset
+        def _on_preview_changed(obj: object) -> None:
+            try:
+                typed: _SP | None = obj if isinstance(obj, _SP) or obj is None else None  # type: ignore[no-redef]
+                if typed is None and obj is not None:
+                    return
+                self._solid_graph = solid_to_scene(scene, placement=typed)
+                if self._viewport is not None:
+                    self._viewport.set_solid_scene(apply_placement(scene, typed))
+                self.scene_changed.emit()
+            except Exception:
+                pass
 
-        # Calculate the stock origin point in world coordinates
-        if origin == StockOrigin.CENTER_XY_TOP_Z:
-            origin_x = stock.position_x_mm + stock.width_mm / 2.0
-            origin_y = stock.position_y_mm + stock.length_mm / 2.0
-            origin_z = stock.position_z_mm + stock.height_mm
-        elif origin == StockOrigin.CORNER_XY_TOP_Z:
-            origin_x = stock.position_x_mm
-            origin_y = stock.position_y_mm
-            origin_z = stock.position_z_mm + stock.height_mm
-        elif origin == StockOrigin.CENTER_XY_ZERO_Z:
-            origin_x = stock.position_x_mm + stock.width_mm / 2.0
-            origin_y = stock.position_y_mm + stock.length_mm / 2.0
-            origin_z = stock.position_z_mm
-        else:  # CORNER_XY_ZERO_Z
-            origin_x = stock.position_x_mm
-            origin_y = stock.position_y_mm
-            origin_z = stock.position_z_mm
+        def _on_finished(result: int) -> None:
+            dlg = self._solid_dialog
+            if dlg is None:
+                return
+            try:
+                dlg.placement_changed.disconnect(_on_preview_changed)
+            except Exception:
+                pass
+            try:
+                dlg.finished.disconnect(_on_finished)
+            except Exception:
+                pass
+            self._solid_dialog = None
+            accepted = result == 1  # QDialog.Accepted
+            if not accepted:
+                # Revert preview to previous persisted state.
+                self._solid_scene = self._solid_dialog_prev_scene
+                self._project = self._solid_dialog_prev_project  # type: ignore[assignment]
+                self._rebuild_solid_graph()
+                self.scene_changed.emit()
+                self.status_message.emit("3D solid import cancelled" if is_import else "3D placement edit cancelled")
+                return
+            final_placement = dlg.result_placement()
+            if is_import:
+                assert self._solid_dialog_prev_project is not None
+                self._app.project_service.attach_solid(self._solid_dialog_prev_project.id, scene, final_placement)
+                self._project = self._app.project_service.get_project(self._solid_dialog_prev_project.id)
+                self._solid_scene = scene
+            else:
+                assert self._project is not None
+                pid = self._project.id
+                # _project may have been mutated during preview revert; re-fetch current
+                pid = self._solid_dialog_prev_project.id if self._solid_dialog_prev_project is not None else pid  # type: ignore[union-attr]
+                self._app.project_service.replace_solid_placement(pid, final_placement)
+                self._project = self._app.project_service.get_project(pid)
+            self._rebuild_solid_graph()
+            self._rebuild_setup_graph()
+            self.scene_changed.emit()
+            self.clear_toolpaths()
+            if is_import:
+                self.status_message.emit(f"Imported 3D {scene.source.path} ({scene.feature_count()} features)")
+            else:
+                self.status_message.emit("3D placement updated")
 
-        # Apply WCS offset
-        wcs = self._project.wcs if self._project else None
-        if wcs:
-            origin_x += wcs.offset_x_mm
-            origin_y += wcs.offset_y_mm
-            origin_z += wcs.offset_z_mm
+        dialog.placement_changed.connect(_on_preview_changed)
+        dialog.finished.connect(_on_finished)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
-        # Translate the solid scene
-        return scene.translate(origin_x + ox, origin_y + oy, origin_z + oz)
+    def _rebuild_solid_graph(self) -> None:
+        """Rebuild the solid render graph from the persisted placement (lazy apply)."""
+        if self._solid_scene is None or self._project is None:
+            self._solid_graph = RenderScene()
+            if self._viewport is not None:
+                self._viewport.set_solid_scene(None)
+            return
+        placement = self._project.solid_placement
+        self._solid_graph = solid_to_scene(self._solid_scene, placement=placement)
+        if self._viewport is not None:
+            from antcam_rc2.core.project.solid_placement import apply_placement
+
+            placed = apply_placement(self._solid_scene, placement) if placement is not None else self._solid_scene
+            self._viewport.set_solid_scene(placed)
 
     def select_solid_feature(self, body_index: int, feature_index: int) -> None:
         """Add one picked 3D feature to the active operation (like 2D picking)."""
@@ -452,7 +522,13 @@ class ProjectController(QObject):
         if self._scene is None:
             self.status_message.emit("Import geometry before generating a toolpath")
             return
-        self.toolpath_controller.generate(project.id, self._scene)
+        # Pass placed solid scene (if any) so toolpath uses transformed feature coordinates.
+        placed_solid = None
+        if self._solid_scene is not None:
+            from antcam_rc2.core.project.solid_placement import apply_placement
+
+            placed_solid = apply_placement(self._solid_scene, project.solid_placement)
+        self.toolpath_controller.generate(project.id, self._scene, solid_scene=placed_solid)
 
     def bind_viewport(self, viewport: GLViewport) -> None:
         """Bind the viewport used for simulation visuals (called by MainWindow)."""
@@ -500,9 +576,12 @@ class ProjectController(QObject):
         self._last_plan = None
         self._last_artifact = None
         self._scene = None
+        # Restore transient solid from service (if any) and rebuild its graph.
+        self._solid_scene = self._app.project_service.get_solid_scene(project.id)  # ty: ignore[invalid-assignment]
         self._geometry_graph = RenderScene()
         self._toolpath_graph = RenderScene()
         self._rebuild_setup_graph()
+        self._rebuild_solid_graph()
         self.project_opened.emit()
         self.operations_changed.emit()
         self.toolpath_changed.emit()
@@ -512,7 +591,12 @@ class ProjectController(QObject):
             return
         self._project = self._app.project_service.get_project(self._project.id)
         self._machine = self._app.catalog_repository.machine(self._project.machine_id)
+        # Keep solid scene in sync after undo/redo of placement.
+        svc_scene = self._app.project_service.get_solid_scene(self._project.id)
+        if svc_scene is not None:
+            self._solid_scene = svc_scene  # ty: ignore[invalid-assignment]
         self._rebuild_setup_graph()
+        self._rebuild_solid_graph()
         self.operations_changed.emit()
 
     def _rebuild_setup_graph(self) -> None:

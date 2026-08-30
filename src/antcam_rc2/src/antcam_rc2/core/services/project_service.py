@@ -24,6 +24,7 @@ from antcam_rc2.core.project.models import (
     OperationParameters,
     OperationType,
     Project,
+    SolidPlacement,
     SolidRef,
     Stock,
 )
@@ -33,6 +34,10 @@ from antcam_rc2.core.project.persistence import (
     write_project_document,
 )
 from antcam_rc2.core.project.repository import ProjectRepository
+from antcam_rc2.core.project.solid_refs import bind_solid
+
+if False:  # TYPE_CHECKING
+    from antcam_rc2.core.geometry3d.scene import SolidScene  # noqa: F401
 from antcam_rc2.core.services.command_stack import CommandStack
 from antcam_rc2.core.services.events import (
     Event,
@@ -71,6 +76,7 @@ class ProjectService:
         self._event_bus = event_bus
         self._clock = clock
         self._scenes: dict[str, GeometryScene] = {}
+        self._solid_scenes: dict[str, object] = {}  # project_id -> SolidScene (object to avoid cycle)
 
     def create_project(self, name: str, *, machine_id: str, stock: Stock) -> Project:
         """Create and store a catalog-valid project setup."""
@@ -271,6 +277,47 @@ class ProjectService:
         project = self.get_project(project_id)
         self._scenes[project_id] = scene
         self._commit(project, self._updated(project, geometry_binding=bind_geometry(scene)), "Attach geometry")
+
+    def attach_solid(self, project_id: str, scene: object, placement: SolidPlacement | None = None) -> None:
+        """Attach a transient 3D solid scene and persist binding + placement.
+
+        ``placement`` defaults to the current project placement (kept) or None.
+        """
+        from antcam_rc2.core.geometry3d.scene import SolidScene  # noqa: WPS433 - lazy to avoid cycle
+
+        if not isinstance(scene, SolidScene):
+            raise ProjectError(f"attach_solid expects SolidScene, got {type(scene).__name__}")
+        project = self.get_project(project_id)
+        binding = bind_solid(scene)
+        # Keep existing placement if caller did not supply a new one.
+        new_placement = placement if placement is not None else project.solid_placement
+        self._solid_scenes[project_id] = scene
+        self._commit(
+            project,
+            self._updated(project, solid_binding=binding, solid_placement=new_placement),
+            "Attach solid",
+        )
+
+    def replace_solid_placement(self, project_id: str, placement: SolidPlacement | None) -> None:
+        """Replace the non-destructive solid placement (undoable)."""
+        project = self.get_project(project_id)
+        self._commit(project, self._updated(project, solid_placement=placement), "Set solid placement")
+
+    def detach_solid(self, project_id: str) -> None:
+        """Remove the transient solid scene and its persisted binding/placement (undoable)."""
+        project = self.get_project(project_id)
+        if project.solid_binding is None and project.solid_placement is None and project_id not in self._solid_scenes:
+            return
+        self._solid_scenes.pop(project_id, None)
+        self._commit(
+            project,
+            self._updated(project, solid_binding=None, solid_placement=None),
+            "Remove solid",
+        )
+
+    def get_solid_scene(self, project_id: str) -> object | None:
+        """Return the attached transient SolidScene for ``project_id``, if any."""
+        return self._solid_scenes.get(project_id)
 
     def validate_geometry_references(self, project_id: str) -> tuple[GeometryReferenceError, ...]:
         """Return safe-reference errors for the currently attached scene, if any."""

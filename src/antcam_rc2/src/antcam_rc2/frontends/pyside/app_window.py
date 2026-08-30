@@ -239,7 +239,8 @@ class MainWindow(QMainWindow):
 
     def _on_stock_changed(self) -> None:
         """Recenter the view on the stock center when stock changes."""
-        self._viewport.fit_to_stock(self._controller.project.stock if self._controller.project else None)
+        project = self._controller.project
+        self._viewport.fit_to_stock(project.stock if project else None, project.wcs if project else None)
 
     def _on_solid_feature_picked(self, body_index: int, feature_index: int) -> None:
         self._controller.select_solid_feature(body_index, feature_index)

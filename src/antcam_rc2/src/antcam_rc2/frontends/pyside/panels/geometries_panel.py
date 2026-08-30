@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from antcam_rc2.core.rendering import geometry_to_scene, solid_to_scene
+from antcam_rc2.core.rendering import geometry_to_scene
 from antcam_rc2.frontends.pyside.controllers.project_controller import ProjectController
 
 
@@ -151,19 +151,25 @@ class GeometriesPanel(QWidget):
     def _on_recenter_3d(self) -> None:
         if self._controller.project is None or self._controller._solid_scene is None:
             return
-        # Recenter 3D solid using the same origin as 2D (center_xy_top_z)
+        from antcam_rc2.core.project.solid_placement import translation_for_center_on_stock
+
         scene = self._controller._solid_scene
-        stock = self._controller.project.stock
-        wcs = self._controller.project.wcs
-        target_x = stock.position_x_mm + wcs.offset_x_mm + stock.width_mm / 2.0
-        target_y = stock.position_y_mm + wcs.offset_y_mm + stock.length_mm / 2.0
-        bbox = scene.bounding_box()
-        self._controller._solid_scene = scene.translate(
-            target_x - bbox.center[0],
-            target_y - bbox.center[1],
-            -bbox.center[2],
+        project = self._controller.project
+        existing = project.solid_placement
+        rot = existing.rotation_deg if existing is not None else (0.0, 0.0, 0.0)
+        sc = float(existing.scale) if existing is not None else 1.0
+        dx, dy, dz = translation_for_center_on_stock(
+            scene, project.stock, project.wcs, rotation_deg=rot, scale=sc
         )
-        self._controller._rebuild_setup_graph()
+        stock_origin = existing.stock_origin if existing is not None else project.stock.origin
+        if existing is not None:
+            placement = existing.model_copy(update={"translation": (dx, dy, dz)})
+        else:
+            from antcam_rc2.core.project.models import SolidPlacement
+
+            placement = SolidPlacement(translation=(dx, dy, dz), stock_origin=stock_origin)
+        self._controller._app.project_service.replace_solid_placement(project.id, placement)
+        self._controller._reload_project()
         self._controller.scene_changed.emit()
         self.refresh()
 
@@ -216,47 +222,27 @@ class GeometriesPanel(QWidget):
         self.refresh()
 
     def _on_edit_3d(self) -> None:
-        """Edit position/rotation of selected 3D solid body."""
-        item = self._geom3d_list.currentItem()
-        if not item:
-            return
-        data = item.data(0x0100)
-        if not data or data[0] != "solid":
-            return
-        body_idx = data[1]
-        # TODO: Open dialog to edit position/rotation of 3D body
-        self._controller.status_message.emit(
-            f"Edit 3D solid position/rotation for body {body_idx} - not yet implemented"
-        )
-
-    def _on_remove_3d(self) -> None:
-        """Remove selected 3D solid body."""
-        item = self._geom3d_list.currentItem()
-        if not item:
-            return
-        data = item.data(0x0100)
-        if not data or data[0] != "solid":
-            return
-        body_idx = data[1]
+        """Edit placement — delegates to the controller's shared modeless dialog (same as on import)."""
         if self._controller.project is None or self._controller._solid_scene is None:
             return
-        scene = self._controller._solid_scene
-        new_bodies = [b for i, b in enumerate(scene.bodies) if i != body_idx]
-        from antcam_rc2.core.geometry3d.scene import SolidScene
+        # Same dialog as import, with live preview and non-modal viewport navigation.
+        self._controller.edit_solid_placement()
+        # Refresh is handled via scene_changed once the dialog closes; also refresh now for selection.
+        self.refresh()
 
-        new_scene = SolidScene(
-            source=scene.source,
-            bodies=tuple(new_bodies),
-            units=scene.units,
-            tolerance_mm=scene.tolerance_mm,
-            warnings=scene.warnings,
-            errors=scene.errors,
-        )
-        self._controller._solid_scene = new_scene
-        self._controller._solid_graph = solid_to_scene(new_scene)
-        self._controller._rebuild_setup_graph()
+    def _on_remove_3d(self) -> None:
+        """Remove the attached 3D solid (via persistent binding)."""
+        if self._controller.project is None:
+            return
+        item = self._geom3d_list.currentItem()
+        if not item:
+            return
+        data = item.data(0x0100)
+        if not data or data[0] != "solid":
+            return
+        self._controller._app.project_service.detach_solid(self._controller.project.id)
+        self._controller._reload_project()
         self._controller.scene_changed.emit()
-        # Clear toolpaths since geometry changed
         self._controller.clear_toolpaths()
         self.refresh()
 

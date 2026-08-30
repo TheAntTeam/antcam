@@ -144,6 +144,57 @@ class Feature3D(_SolidModel):
                 raise ValueError("HOLE features require center and radius")
         return self
 
+    def apply(self, affine: object) -> Feature3D:
+        """Return a new feature with ``affine`` applied (boundary/center/normal/plane_z)."""
+        from antcam_rc2.core.geometry3d.transform import Affine3D  # noqa: WPS433
+
+        if not isinstance(affine, Affine3D):
+            raise TypeError(f"Feature3D.apply expects Affine3D, got {type(affine).__name__}")
+        import numpy as np
+
+        # Transform boundary points
+        if self.boundary:
+            pts = np.array(self.boundary, dtype=np.float64)
+            new_pts = affine.apply_points(pts)
+            new_boundary: tuple[tuple[float, float, float], ...] = tuple(
+                (float(p[0]), float(p[1]), float(p[2])) for p in new_pts
+            )
+        else:
+            new_boundary = ()
+        # Transform center (HOLE) — 2D center is XY, z is plane_z
+        if self.center is not None:
+            c3 = np.array([[self.center[0], self.center[1], self.plane_z_mm]], dtype=np.float64)
+            c3t = affine.apply_points(c3)[0]
+            new_center: tuple[float, float] | None = (float(c3t[0]), float(c3t[1]))
+            new_plane_z = float(c3t[2])
+        else:
+            new_center = None
+            # For non-hole, plane_z is z of a point on the plane (take first boundary or 0)
+            if new_boundary:
+                new_plane_z = float(new_boundary[0][2])
+            else:
+                # Transform the point (0,0,plane_z) to get new plane_z
+                p = np.array([[0.0, 0.0, self.plane_z_mm]], dtype=np.float64)
+                new_plane_z = float(affine.apply_points(p)[0, 2])
+        # Transform normal (rotation + uniform scale only; use apply_normal)
+        new_normal = affine.apply_normal(self.plane_normal)
+        # Scale radius by uniform scale factor
+        new_radius: float | None = None
+        if self.radius is not None:
+            new_radius = float(self.radius * affine.scale_factor())
+        return Feature3D(
+            kind=self.kind,
+            body_index=self.body_index,
+            feature_index=self.feature_index,
+            plane_z_mm=new_plane_z,
+            plane_normal=new_normal,
+            boundary=new_boundary,
+            triangles=self.triangles,
+            center=new_center,
+            radius=new_radius,
+            facing=self.facing,
+        )
+
     def fingerprint(self, tolerance_mm: float) -> str:
         """A canonical identity for fail-closed persistent references."""
         if tolerance_mm <= 0:
@@ -181,22 +232,37 @@ class SolidBody(_SolidModel):
                 mapping[int(triangle)] = feature.feature_index
         return mapping
 
-    def translate(self, dx: float, dy: float, dz: float) -> SolidBody:
-        """Return a new body with the mesh translated by (dx, dy, dz)."""
+    def apply(self, affine: object) -> SolidBody:
+        """Return a new body with ``affine`` applied to mesh and features."""
+        from antcam_rc2.core.geometry3d.transform import Affine3D  # noqa: WPS433
+
+        if not isinstance(affine, Affine3D):
+            raise TypeError(f"SolidBody.apply expects Affine3D, got {type(affine).__name__}")
         return SolidBody(
             id=self.id,
             name=self.name,
-            mesh=self.mesh.translate(dx, dy, dz),
-            features=self.features,
+            mesh=self.mesh.apply(affine),
+            features=tuple(f.apply(affine) for f in self.features),
         )
+
+    def translate(self, dx: float, dy: float, dz: float) -> SolidBody:
+        """Return a new body with the mesh translated by (dx, dy, dz)."""
+        from antcam_rc2.core.geometry3d.transform import Affine3D  # noqa: WPS433
+
+        return self.apply(Affine3D.translate(dx, dy, dz))
 
     def rotate(self, rx: float, ry: float, rz: float, cx: float = 0.0, cy: float = 0.0, cz: float = 0.0) -> SolidBody:
         """Return a new body with the mesh rotated by (rx, ry, rz) degrees around center (cx, cy, cz)."""
-        return SolidBody(
-            id=self.id,
-            name=self.name,
-            mesh=self.mesh.rotate(rx, ry, rz, cx, cy, cz),
-            features=self.features,
+        from antcam_rc2.core.geometry3d.transform import Affine3D  # noqa: WPS433
+
+        if cx == 0.0 and cy == 0.0 and cz == 0.0:
+            return self.apply(Affine3D.rotate(rx, ry, rz))
+        return self.apply(
+            Affine3D.chain(
+                Affine3D.translate(cx, cy, cz),
+                Affine3D.rotate(rx, ry, rz),
+                Affine3D.translate(-cx, -cy, -cz),
+            )
         )
 
 
@@ -248,26 +314,37 @@ class SolidScene(_SolidModel):
             box = box.union(body.mesh.bounding_box)
         return box
 
-    def translate(self, dx: float, dy: float, dz: float) -> SolidScene:
-        """Return a new scene with all bodies translated by (dx, dy, dz)."""
-        translated_bodies = tuple(body.translate(dx, dy, dz) for body in self.bodies)
+    def apply(self, affine: object) -> SolidScene:
+        """Return a new scene with ``affine`` applied to all bodies (mesh + features)."""
+        from antcam_rc2.core.geometry3d.transform import Affine3D  # noqa: WPS433
+
+        if not isinstance(affine, Affine3D):
+            raise TypeError(f"SolidScene.apply expects Affine3D, got {type(affine).__name__}")
         return SolidScene(
             source=self.source,
-            bodies=translated_bodies,
+            bodies=tuple(b.apply(affine) for b in self.bodies),
             units=self.units,
             tolerance_mm=self.tolerance_mm,
             warnings=self.warnings,
             errors=self.errors,
         )
 
+    def translate(self, dx: float, dy: float, dz: float) -> SolidScene:
+        """Return a new scene with all bodies translated by (dx, dy, dz)."""
+        from antcam_rc2.core.geometry3d.transform import Affine3D  # noqa: WPS433
+
+        return self.apply(Affine3D.translate(dx, dy, dz))
+
     def rotate(self, rx: float, ry: float, rz: float, cx: float = 0.0, cy: float = 0.0, cz: float = 0.0) -> SolidScene:
         """Return a new scene with all bodies rotated by (rx, ry, rz) degrees around center (cx, cy, cz)."""
-        rotated_bodies = tuple(body.rotate(rx, ry, rz, cx, cy, cz) for body in self.bodies)
-        return SolidScene(
-            source=self.source,
-            bodies=rotated_bodies,
-            units=self.units,
-            tolerance_mm=self.tolerance_mm,
-            warnings=self.warnings,
-            errors=self.errors,
+        from antcam_rc2.core.geometry3d.transform import Affine3D  # noqa: WPS433
+
+        if cx == 0.0 and cy == 0.0 and cz == 0.0:
+            return self.apply(Affine3D.rotate(rx, ry, rz))
+        return self.apply(
+            Affine3D.chain(
+                Affine3D.translate(cx, cy, cz),
+                Affine3D.rotate(rx, ry, rz),
+                Affine3D.translate(-cx, -cy, -cz),
+            )
         )
