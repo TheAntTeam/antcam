@@ -755,12 +755,21 @@ def _opaque(color: RGBA) -> RGBA:
     return (color[0], color[1], color[2], 1.0)
 
 
-def solid_to_scene(scene: SolidScene, placement: object | None = None) -> RenderScene:
+_SOLID_SELECTION_COLOR: RGBA = (0.30, 0.64, 1.0, 1.0)
+
+
+def solid_to_scene(
+    scene: SolidScene,
+    placement: object | None = None,
+    selected: set[tuple[int, int]] | None = None,
+) -> RenderScene:
     """Build a render graph with one :class:`RenderMesh` per solid body.
 
     If ``placement`` (SolidPlacement) is provided, the scene is transformed
     via ``apply_placement`` before flattening — the raw ``SolidScene`` stays
-    immutable.
+    immutable. When ``selected`` contains ``(body_index, feature_index)`` pairs
+    an accent ``LINE_STRIP`` overlay is emitted for each selected feature
+    boundary so the viewport can highlight it.
     """
     if placement is not None:
         # Lazy import to avoid circular dependency (models -> geometry3d).
@@ -786,7 +795,45 @@ def solid_to_scene(scene: SolidScene, placement: object | None = None) -> Render
                 picking_id=body_index + 1,
             )
         )
-    return RenderScene(meshes=tuple(meshes))
+    nodes: list[RenderNode] = []
+    if selected:
+        for body_index, feature_index in selected:
+            if 0 <= body_index < len(scene.bodies):
+                body = scene.bodies[body_index]
+                if 0 <= feature_index < len(body.features):
+                    feature = body.features[feature_index]
+                    boundary = feature.boundary
+                    if boundary:
+                        pts = [(float(x), float(y), float(z)) for x, y, z in boundary]
+                        # Close loop for rendering
+                        if pts and pts[0] != pts[-1]:
+                            pts.append(pts[0])
+                        nodes.append(
+                            RenderNode(
+                                kind=NodeKind.LINE_STRIP,
+                                points=flat_points(pts),
+                                color=_SOLID_SELECTION_COLOR,
+                                width_px=3.0,
+                            )
+                        )
+                    elif feature.center is not None and feature.radius is not None:
+                        # Fallback for HOLE without boundary (should not happen): draw circle
+                        cx, cy = feature.center
+                        r = float(feature.radius)
+                        z = float(feature.plane_z_mm)
+                        circle_pts = [
+                            (cx + r * math.cos(2 * math.pi * i / 32), cy + r * math.sin(2 * math.pi * i / 32), z)
+                            for i in range(33)
+                        ]
+                        nodes.append(
+                            RenderNode(
+                                kind=NodeKind.LINE_STRIP,
+                                points=flat_points(circle_pts),
+                                color=_SOLID_SELECTION_COLOR,
+                                width_px=3.0,
+                            )
+                        )
+    return RenderScene(nodes=tuple(nodes), meshes=tuple(meshes))
 
 
 def compose_scenes(*scenes: RenderScene) -> RenderScene:

@@ -5,9 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QFileDialog,
     QGroupBox,
     QHBoxLayout,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QPushButton,
@@ -25,6 +27,7 @@ class GeometriesPanel(QWidget):
     def __init__(self, controller: ProjectController, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._controller = controller
+        self._updating_3d_selection = False
 
         layout = QVBoxLayout(self)
 
@@ -32,18 +35,22 @@ class GeometriesPanel(QWidget):
         geom2d_group = QGroupBox("2D Geometries (DXF/SVG)")
         geom2d_layout = QVBoxLayout(geom2d_group)
 
+        self._geom2d_name = QLineEdit(self)
+        self._geom2d_name.setReadOnly(True)
+        self._geom2d_name.setPlaceholderText("Nessuna geometria 2D")
+        self._geom2d_name.setToolTip("Nome file della geometria 2D importata")
+        geom2d_layout.addWidget(self._geom2d_name)
+
         self._geom2d_list = QListWidget(self)
-        self._geom2d_list.setToolTip("Imported 2D geometries")
+        self._geom2d_list.setToolTip("Layer della geometria 2D")
         geom2d_layout.addWidget(self._geom2d_list)
 
         geom2d_buttons = QHBoxLayout()
         import_2d = QPushButton("Import 2D Geometry...", self)
-        recenter_2d = QPushButton("Recenter on Stock", self)
         edit_2d = QPushButton("Edit Position...", self)
         remove_2d = QPushButton("Remove", self)
         remove_2d.setObjectName("danger")
         geom2d_buttons.addWidget(import_2d)
-        geom2d_buttons.addWidget(recenter_2d)
         geom2d_buttons.addWidget(edit_2d)
         geom2d_buttons.addWidget(remove_2d)
         geom2d_layout.addLayout(geom2d_buttons)
@@ -54,18 +61,23 @@ class GeometriesPanel(QWidget):
         geom3d_group = QGroupBox("3D Solids (STEP/STL)")
         geom3d_layout = QVBoxLayout(geom3d_group)
 
+        self._solid_name = QLineEdit(self)
+        self._solid_name.setReadOnly(True)
+        self._solid_name.setPlaceholderText("Nessun solido 3D")
+        self._solid_name.setToolTip("Nome file del solido 3D importato")
+        geom3d_layout.addWidget(self._solid_name)
+
         self._geom3d_list = QListWidget(self)
-        self._geom3d_list.setToolTip("Imported 3D solids")
+        self._geom3d_list.setToolTip("Feature del solido 3D (seleziona per evidenziare)")
+        self._geom3d_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         geom3d_layout.addWidget(self._geom3d_list)
 
         geom3d_buttons = QHBoxLayout()
         import_3d = QPushButton("Import 3D Solid...", self)
-        recenter_3d = QPushButton("Recenter on Stock", self)
         edit_3d = QPushButton("Edit Position/Rotation...", self)
         remove_3d = QPushButton("Remove", self)
         remove_3d.setObjectName("danger")
         geom3d_buttons.addWidget(import_3d)
-        geom3d_buttons.addWidget(recenter_3d)
         geom3d_buttons.addWidget(edit_3d)
         geom3d_buttons.addWidget(remove_3d)
         geom3d_layout.addLayout(geom3d_buttons)
@@ -74,14 +86,13 @@ class GeometriesPanel(QWidget):
 
         # Connect signals
         import_2d.clicked.connect(self._on_import_2d)
-        recenter_2d.clicked.connect(self._on_recenter_2d)
         edit_2d.clicked.connect(self._on_edit_2d)
         remove_2d.clicked.connect(self._on_remove_2d)
 
         import_3d.clicked.connect(self._on_import_3d)
-        recenter_3d.clicked.connect(self._on_recenter_3d)
         edit_3d.clicked.connect(self._on_edit_3d)
         remove_3d.clicked.connect(self._on_remove_3d)
+        self._geom3d_list.itemSelectionChanged.connect(self._on_3d_selection_changed)
 
         # Refresh when scene changes (geometries loaded)
         self._controller.scene_changed.connect(self.refresh)
@@ -95,23 +106,69 @@ class GeometriesPanel(QWidget):
         """Refresh all lists from the current project."""
         project = self._controller.project
 
-        # 2D Geometries - show by layer/file
+        # 2D Geometries - name field + layer list
         self._geom2d_list.clear()
         if project and self._controller.scene:
             scene = self._controller.scene
-            item_text = f"2D Geometry: {scene.source.path}" if scene.source.path else "2D Geometry (DXF/SVG)"
-            item = QListWidgetItem(item_text)
-            item.setData(0x0100, ("geometry", "all"))
-            self._geom2d_list.addItem(item)
+            name = scene.source.path if scene.source.path else "2D Geometry (DXF/SVG)"
+            self._geom2d_name.setText(name)
+            self._geom2d_name.setToolTip(name)
+            # Show layers as individual items for clarity
+            for layer in scene.layers:
+                item_text = f"Layer '{layer.name}' ({len(layer.entities)} entità)"
+                item = QListWidgetItem(item_text)
+                item.setData(0x0100, ("geometry", layer.name))
+                self._geom2d_list.addItem(item)
+            if not scene.layers:
+                item = QListWidgetItem("2D Geometry: (nessun layer)")
+                item.setData(0x0100, ("geometry", "all"))
+                self._geom2d_list.addItem(item)
+        else:
+            self._geom2d_name.clear()
 
-        # 3D Solids - show by file (not bodies/features)
-        self._geom3d_list.clear()
-        if project and self._controller._solid_scene:
-            scene = self._controller._solid_scene
-            item_text = f"3D Solid: {scene.source.path}" if scene.source.path else "3D Solid (STEP/STL)"
-            item = QListWidgetItem(item_text)
-            item.setData(0x0100, ("solid", "all"))
-            self._geom3d_list.addItem(item)
+        # 3D Solids - name field + feature list
+        # Block signal to avoid feedback loop when syncing selection
+        self._updating_3d_selection = True
+        try:
+            self._geom3d_list.clear()
+            if project and self._controller._solid_scene:
+                scene = self._controller._solid_scene
+                name = scene.source.path if scene.source.path else "3D Solid (STEP/STL)"
+                # Prefer body name if single body
+                if len(scene.bodies) == 1 and scene.bodies[0].name:
+                    # Keep path as tooltip, but name field shows path; body name added in list header
+                    pass
+                self._solid_name.setText(name)
+                self._solid_name.setToolTip(name)
+                for body_index, body in enumerate(scene.bodies):
+                    for feature in body.features:
+                        kind = feature.kind.value
+                        z = feature.plane_z_mm
+                        detail = ""
+                        if feature.kind.value == "hole" and feature.radius is not None:
+                            detail = f" r={feature.radius:.2f}mm"
+                            if feature.center is not None:
+                                detail += f" @({feature.center[0]:.1f},{feature.center[1]:.1f})"
+                        elif feature.boundary:
+                            detail = f" verts={len(feature.boundary)}"
+                        facing = " ↑" if feature.facing else ""
+                        item_text = f"{kind} [{body_index}:{feature.feature_index}] z={z:.2f}{detail}{facing}"
+                        item = QListWidgetItem(item_text)
+                        item.setData(0x0100, (body_index, feature.feature_index))
+                        tooltip = f"Body {body_index} ({body.name}) — {kind} z={z:.2f}{detail}"
+                        item.setToolTip(tooltip)
+                        self._geom3d_list.addItem(item)
+                        # Restore selection from controller
+                        if (body_index, feature.feature_index) in self._controller.selected_solid_features:
+                            item.setSelected(True)
+                if scene.feature_count() == 0:
+                    item = QListWidgetItem("(nessuna feature rilevata)")
+                    item.setFlags(item.flags() & ~item.flags().__class__.ItemIsSelectable)  # type: ignore[attr-defined]
+                    self._geom3d_list.addItem(item)
+            else:
+                self._solid_name.clear()
+        finally:
+            self._updating_3d_selection = False
 
     # ------------------------------------------------------------------ actions
     def _on_import_2d(self) -> None:
@@ -140,38 +197,15 @@ class GeometriesPanel(QWidget):
             self._controller.import_solid(Path(path))
             self.refresh()
 
-    def _on_recenter_2d(self) -> None:
-        if self._controller.project is None or self._controller.scene is None:
+    def _on_3d_selection_changed(self) -> None:
+        if self._updating_3d_selection:
             return
-        self._controller._center_geometry_in_stock(self._controller.scene)
-        self._controller._rebuild_setup_graph()
-        self._controller.scene_changed.emit()
-        self.refresh()
-
-    def _on_recenter_3d(self) -> None:
-        if self._controller.project is None or self._controller._solid_scene is None:
-            return
-        from antcam_rc2.core.project.solid_placement import translation_for_center_on_stock
-
-        scene = self._controller._solid_scene
-        project = self._controller.project
-        existing = project.solid_placement
-        rot = existing.rotation_deg if existing is not None else (0.0, 0.0, 0.0)
-        sc = float(existing.scale) if existing is not None else 1.0
-        dx, dy, dz = translation_for_center_on_stock(
-            scene, project.stock, project.wcs, rotation_deg=rot, scale=sc
-        )
-        stock_origin = existing.stock_origin if existing is not None else project.stock.origin
-        if existing is not None:
-            placement = existing.model_copy(update={"translation": (dx, dy, dz)})
-        else:
-            from antcam_rc2.core.project.models import SolidPlacement
-
-            placement = SolidPlacement(translation=(dx, dy, dz), stock_origin=stock_origin)
-        self._controller._app.project_service.replace_solid_placement(project.id, placement)
-        self._controller._reload_project()
-        self._controller.scene_changed.emit()
-        self.refresh()
+        selected: set[tuple[int, int]] = set()
+        for item in self._geom3d_list.selectedItems():
+            data = item.data(0x0100)
+            if isinstance(data, tuple) and len(data) == 2:
+                selected.add((int(data[0]), int(data[1])))
+        self._controller.set_selected_solid_features(selected)
 
     def _on_edit_2d(self) -> None:
         """Edit position of selected 2D geometry layer."""
@@ -182,7 +216,6 @@ class GeometriesPanel(QWidget):
         if not data or data[0] != "geometry":
             return
         layer_name = data[1]
-        # TODO: Open dialog to edit position/rotation of 2D layer
         self._controller.status_message.emit(
             f"Edit 2D geometry position for layer '{layer_name}' - not yet implemented"
         )
@@ -231,19 +264,13 @@ class GeometriesPanel(QWidget):
         self.refresh()
 
     def _on_remove_3d(self) -> None:
-        """Remove the attached 3D solid (via persistent binding)."""
+        """Remove the attached 3D solid (via persistent binding + refs + toolpaths)."""
         if self._controller.project is None:
             return
-        item = self._geom3d_list.currentItem()
-        if not item:
+        if self._controller._solid_scene is None:
+            self._controller.status_message.emit("Nessun solido 3D da rimuovere")
             return
-        data = item.data(0x0100)
-        if not data or data[0] != "solid":
-            return
-        self._controller._app.project_service.detach_solid(self._controller.project.id)
-        self._controller._reload_project()
-        self._controller.scene_changed.emit()
-        self._controller.clear_toolpaths()
+        self._controller.remove_solid_completely()
         self.refresh()
 
     def _on_import_busy(self, busy: bool) -> None:

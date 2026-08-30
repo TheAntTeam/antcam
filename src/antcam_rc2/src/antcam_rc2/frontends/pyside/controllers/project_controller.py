@@ -73,6 +73,7 @@ class ProjectController(QObject):
         self._toolpath_graph = RenderScene()
         self._solid_graph = RenderScene()
         self._selected_operation_id: str | None = None
+        self._selected_solid_features: set[tuple[int, int]] = set()
         self._last_plan: ToolpathPlan | None = None
         self._last_artifact: ToolpathArtifact | None = None
 
@@ -249,8 +250,10 @@ class ProjectController(QObject):
         # Show initial placement immediately (live preview without persisting yet).
         initial = dialog.result_placement()
         if is_import:
+            # New solid replaces previous one immediately in preview; clear old highlight.
+            self._selected_solid_features.clear()
             self._solid_scene = scene
-        self._solid_graph = solid_to_scene(scene, placement=initial)
+        self._solid_graph = solid_to_scene(scene, placement=initial, selected=self._selected_solid_features or None)
         if self._viewport is not None:
             self._viewport.set_solid_scene(apply_placement(scene, initial))
         self.scene_changed.emit()
@@ -260,7 +263,8 @@ class ProjectController(QObject):
                 typed: _SP | None = obj if isinstance(obj, _SP) or obj is None else None  # type: ignore[no-redef]
                 if typed is None and obj is not None:
                     return
-                self._solid_graph = solid_to_scene(scene, placement=typed)
+                sel = self._selected_solid_features or None
+                self._solid_graph = solid_to_scene(scene, placement=typed, selected=sel)
                 if self._viewport is not None:
                     self._viewport.set_solid_scene(apply_placement(scene, typed))
                 self.scene_changed.emit()
@@ -325,25 +329,95 @@ class ProjectController(QObject):
                 self._viewport.set_solid_scene(None)
             return
         placement = self._project.solid_placement
-        self._solid_graph = solid_to_scene(self._solid_scene, placement=placement)
+        self._solid_graph = solid_to_scene(
+            self._solid_scene, placement=placement, selected=self._selected_solid_features or None
+        )
         if self._viewport is not None:
             from antcam_rc2.core.project.solid_placement import apply_placement
 
             placed = apply_placement(self._solid_scene, placement) if placement is not None else self._solid_scene
             self._viewport.set_solid_scene(placed)
 
+    @property
+    def selected_solid_features(self) -> set[tuple[int, int]]:
+        """Currently highlighted 3D features (body_index, feature_index)."""
+        return set(self._selected_solid_features)
+
+    def set_selected_solid_features(self, features: set[tuple[int, int]]) -> None:
+        """Replace highlighted features and update selection + viewport highlight."""
+        if self._solid_scene is None:
+            self._selected_solid_features = set()
+            self._rebuild_solid_graph()
+            self.scene_changed.emit()
+            return
+        # Filter to valid indices
+        valid: set[tuple[int, int]] = set()
+        for bi, fi in features:
+            if 0 <= bi < len(self._solid_scene.bodies) and 0 <= fi < len(self._solid_scene.bodies[bi].features):
+                valid.add((bi, fi))
+        if valid == self._selected_solid_features:
+            return
+        self._selected_solid_features = valid
+        self._rebuild_solid_graph()
+        self.scene_changed.emit()
+        # Sync operation refs when an operation is active
+        if self._selected_operation_id is not None and valid:
+            self._sync_solid_refs_to_operation()
+
+    def toggle_solid_feature(self, body_index: int, feature_index: int) -> None:
+        """Toggle one feature in the highlight set (list or viewport picking)."""
+        key = (body_index, feature_index)
+        if key in self._selected_solid_features:
+            self._selected_solid_features.remove(key)
+        else:
+            self._selected_solid_features.add(key)
+        self._rebuild_solid_graph()
+        self.scene_changed.emit()
+        if self._selected_operation_id is not None:
+            self._sync_solid_refs_to_operation()
+
+    def clear_selected_solid_features(self) -> None:
+        """Clear highlight without emitting refs."""
+        if not self._selected_solid_features:
+            return
+        self._selected_solid_features.clear()
+        self._rebuild_solid_graph()
+        self.scene_changed.emit()
+
+    def _sync_solid_refs_to_operation(self) -> None:
+        """Push current highlight set as solid_refs on the active operation."""
+        if self._project is None or self._solid_scene is None or self._selected_operation_id is None:
+            return
+        refs = tuple(
+            create_solid_ref(self._solid_scene, bi, fi) for bi, fi in sorted(self._selected_solid_features)
+        )
+        self._app.project_service.replace_solid_refs(self._project.id, self._selected_operation_id, refs)
+
     def select_solid_feature(self, body_index: int, feature_index: int) -> None:
-        """Add one picked 3D feature to the active operation (like 2D picking)."""
+        """Toggle one picked 3D feature (viewport picking)."""
         if self._project is None or self._solid_scene is None:
             return
         operation_id = self._selected_operation_id
         if operation_id is None:
-            self.status_message.emit("Select an operation before picking 3D features")
+            # Still highlight even without active operation
+            self.toggle_solid_feature(body_index, feature_index)
+            self.status_message.emit("Select an operation to bind 3D features")
             return
-        reference = create_solid_ref(self._solid_scene, body_index, feature_index)
-        self._app.project_service.replace_solid_refs(self._project.id, operation_id, (reference,))
+        self.toggle_solid_feature(body_index, feature_index)
         feature = self._solid_scene.bodies[body_index].features[feature_index]
-        self.status_message.emit(f"Added 3D {feature.kind.value} to operation")
+        action = "Added" if (body_index, feature_index) in self._selected_solid_features else "Removed"
+        self.status_message.emit(f"{action} 3D {feature.kind.value} {'to' if action=='Added' else 'from'} operation")
+
+    def remove_solid_completely(self) -> None:
+        """Remove attached solid, all its refs and toolpaths (single source of truth)."""
+        if self._project is None:
+            return
+        self._app.project_service.detach_solid(self._project.id)
+        self._selected_solid_features.clear()
+        self._reload_project()
+        self.scene_changed.emit()
+        self.clear_toolpaths()
+        self.status_message.emit("3D solid removed")
 
     def undo(self) -> None:
         if self._app.project_service.undo():
@@ -519,16 +593,29 @@ class ProjectController(QObject):
     # ------------------------------------------------------------------ toolpath
     def generate_toolpath(self) -> None:
         project = self._require_project()
-        if self._scene is None:
+        if self._scene is None and self._solid_scene is None:
             self.status_message.emit("Import geometry before generating a toolpath")
             return
+        # Allow 3D-only projects: fabricate an empty 2D scene like the CLI does.
+        scene = self._scene
+        if scene is None:
+            from antcam_rc2.core.io.diagnostics import ImportDiagnostics
+            from antcam_rc2.core.io.scene import GeometryScene, SourceInfo
+
+            scene = GeometryScene(
+                source=SourceInfo(format="dxf", path=""),
+                units=project.units,
+                layers=(),
+                diagnostics=ImportDiagnostics(),
+                tolerance_mm=1e-6,
+            )
         # Pass placed solid scene (if any) so toolpath uses transformed feature coordinates.
         placed_solid = None
         if self._solid_scene is not None:
             from antcam_rc2.core.project.solid_placement import apply_placement
 
             placed_solid = apply_placement(self._solid_scene, project.solid_placement)
-        self.toolpath_controller.generate(project.id, self._scene, solid_scene=placed_solid)
+        self.toolpath_controller.generate(project.id, scene, solid_scene=placed_solid)
 
     def bind_viewport(self, viewport: GLViewport) -> None:
         """Bind the viewport used for simulation visuals (called by MainWindow)."""
@@ -573,6 +660,7 @@ class ProjectController(QObject):
         self._project = project
         self._machine = self._app.catalog_repository.machine(project.machine_id)
         self._selected_operation_id = None
+        self._selected_solid_features.clear()
         self._last_plan = None
         self._last_artifact = None
         self._scene = None
@@ -591,10 +679,12 @@ class ProjectController(QObject):
             return
         self._project = self._app.project_service.get_project(self._project.id)
         self._machine = self._app.catalog_repository.machine(self._project.machine_id)
-        # Keep solid scene in sync after undo/redo of placement.
+        # Keep solid scene in sync after undo/redo of placement/detach.
         svc_scene = self._app.project_service.get_solid_scene(self._project.id)
-        if svc_scene is not None:
-            self._solid_scene = svc_scene  # ty: ignore[invalid-assignment]
+        self._solid_scene = svc_scene  # ty: ignore[invalid-assignment]
+        # If solid was detached, also clear highlight / stale refs
+        if self._solid_scene is None:
+            self._selected_solid_features.clear()
         self._rebuild_setup_graph()
         self._rebuild_solid_graph()
         self.operations_changed.emit()

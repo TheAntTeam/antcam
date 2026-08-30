@@ -278,10 +278,20 @@ class ProjectService:
         self._scenes[project_id] = scene
         self._commit(project, self._updated(project, geometry_binding=bind_geometry(scene)), "Attach geometry")
 
+    def clear_solid_refs(self, project_id: str) -> None:
+        """Remove every ``solid_ref`` from all operations (undoable)."""
+        project = self.get_project(project_id)
+        if not any(op.solid_refs for op in project.operations):
+            return
+        operations = tuple(op.model_copy(update={"solid_refs": ()}) for op in project.operations)
+        self._commit(project, self._updated(project, operations=operations), "Clear solid refs")
+
     def attach_solid(self, project_id: str, scene: object, placement: SolidPlacement | None = None) -> None:
         """Attach a transient 3D solid scene and persist binding + placement.
 
         ``placement`` defaults to the current project placement (kept) or None.
+        Any ``solid_refs`` from a previous solid are cleared atomically when
+        the binding changes so stale references never survive a replacement.
         """
         from antcam_rc2.core.geometry3d.scene import SolidScene  # noqa: WPS433 - lazy to avoid cycle
 
@@ -291,12 +301,19 @@ class ProjectService:
         binding = bind_solid(scene)
         # Keep existing placement if caller did not supply a new one.
         new_placement = placement if placement is not None else project.solid_placement
+        # If binding changed, stale solid_refs must be cleared in the same commit.
+        needs_clear = project.solid_binding is not None and project.solid_binding != binding
+        if needs_clear and any(op.solid_refs for op in project.operations):
+            operations: tuple[Operation, ...] = tuple(
+                op.model_copy(update={"solid_refs": ()}) for op in project.operations
+            )
+            after = self._updated(
+                project, solid_binding=binding, solid_placement=new_placement, operations=operations
+            )
+        else:
+            after = self._updated(project, solid_binding=binding, solid_placement=new_placement)
         self._solid_scenes[project_id] = scene
-        self._commit(
-            project,
-            self._updated(project, solid_binding=binding, solid_placement=new_placement),
-            "Attach solid",
-        )
+        self._commit(project, after, "Attach solid")
 
     def replace_solid_placement(self, project_id: str, placement: SolidPlacement | None) -> None:
         """Replace the non-destructive solid placement (undoable)."""
@@ -304,16 +321,23 @@ class ProjectService:
         self._commit(project, self._updated(project, solid_placement=placement), "Set solid placement")
 
     def detach_solid(self, project_id: str) -> None:
-        """Remove the transient solid scene and its persisted binding/placement (undoable)."""
+        """Remove the transient solid scene and its persisted binding/placement (undoable).
+
+        All ``solid_refs`` on operations are cleared in the same commit so the
+        project never retains stale 3D references after the solid is gone.
+        """
         project = self.get_project(project_id)
         if project.solid_binding is None and project.solid_placement is None and project_id not in self._solid_scenes:
             return
         self._solid_scenes.pop(project_id, None)
-        self._commit(
-            project,
-            self._updated(project, solid_binding=None, solid_placement=None),
-            "Remove solid",
-        )
+        if any(op.solid_refs for op in project.operations):
+            operations: tuple[Operation, ...] = tuple(
+                op.model_copy(update={"solid_refs": ()}) for op in project.operations
+            )
+            after = self._updated(project, solid_binding=None, solid_placement=None, operations=operations)
+        else:
+            after = self._updated(project, solid_binding=None, solid_placement=None)
+        self._commit(project, after, "Remove solid")
 
     def get_solid_scene(self, project_id: str) -> object | None:
         """Return the attached transient SolidScene for ``project_id``, if any."""
