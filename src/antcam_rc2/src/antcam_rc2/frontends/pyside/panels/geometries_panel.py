@@ -17,7 +17,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from antcam_rc2.core.rendering import geometry_to_scene
 from antcam_rc2.frontends.pyside.controllers.project_controller import ProjectController
 
 
@@ -106,22 +105,32 @@ class GeometriesPanel(QWidget):
         """Refresh all lists from the current project."""
         project = self._controller.project
 
-        # 2D Geometries - name field + layer list
+        # 2D Geometries - name field + entity (shapes/lines) list
         self._geom2d_list.clear()
         if project and self._controller.scene:
             scene = self._controller.scene
             name = scene.source.path if scene.source.path else "2D Geometry (DXF/SVG)"
             self._geom2d_name.setText(name)
             self._geom2d_name.setToolTip(name)
-            # Show layers as individual items for clarity
+            # List every shape/line entity
             for layer in scene.layers:
-                item_text = f"Layer '{layer.name}' ({len(layer.entities)} entità)"
-                item = QListWidgetItem(item_text)
-                item.setData(0x0100, ("geometry", layer.name))
-                self._geom2d_list.addItem(item)
-            if not scene.layers:
-                item = QListWidgetItem("2D Geometry: (nessun layer)")
-                item.setData(0x0100, ("geometry", "all"))
+                for idx, entity in enumerate(layer.entities):
+                    type_name = type(entity).__name__
+                    # Detail: length or bbox
+                    try:
+                        # Try length
+                        length = getattr(entity, "length", lambda: 0)()
+                        detail = f" len={length:.1f}mm" if length else ""
+                    except Exception:
+                        detail = ""
+                    item_text = f"{type_name} [{layer.name}:{idx}]{detail}"
+                    item = QListWidgetItem(item_text)
+                    item.setData(0x0100, ("geometry", layer.name, idx))
+                    item.setToolTip(f"{type_name} on layer '{layer.name}' index {idx}{detail}")
+                    self._geom2d_list.addItem(item)
+            if self._geom2d_list.count() == 0:
+                item = QListWidgetItem("(nessuna entità)")
+                item.setFlags(item.flags() & ~item.flags().__class__.ItemIsSelectable)  # type: ignore[attr-defined]
                 self._geom2d_list.addItem(item)
         else:
             self._geom2d_name.clear()
@@ -208,50 +217,20 @@ class GeometriesPanel(QWidget):
         self._controller.set_selected_solid_features(selected)
 
     def _on_edit_2d(self) -> None:
-        """Edit position of selected 2D geometry layer."""
-        item = self._geom2d_list.currentItem()
-        if not item:
-            return
-        data = item.data(0x0100)
-        if not data or data[0] != "geometry":
-            return
-        layer_name = data[1]
-        self._controller.status_message.emit(
-            f"Edit 2D geometry position for layer '{layer_name}' - not yet implemented"
-        )
-
-    def _on_remove_2d(self) -> None:
-        """Remove selected 2D geometry layer."""
-        item = self._geom2d_list.currentItem()
-        if not item:
-            return
-        data = item.data(0x0100)
-        if not data or data[0] != "geometry":
-            return
-        layer_name = data[1]
+        """Edit placement — delegates to controller's shared dialog (same as on import)."""
         if self._controller.project is None or self._controller.scene is None:
             return
-        scene = self._controller.scene
-        # Remove the layer from the scene
-        new_layers = [layer for layer in scene.layers if layer.name != layer_name]
-        # Create new scene with filtered layers
-        from antcam_rc2.core.io.diagnostics import ImportDiagnostics
-        from antcam_rc2.core.io.scene import GeometryScene, SourceInfo
+        self._controller.edit_geometry_placement()
+        self.refresh()
 
-        new_scene = GeometryScene(
-            source=SourceInfo(format="dxf", path=""),
-            units=scene.units,
-            layers=new_layers,
-            diagnostics=ImportDiagnostics(),
-            tolerance_mm=scene.tolerance_mm,
-        )
-        self._controller._scene = new_scene
-        self._controller._geometry_graph = geometry_to_scene(new_scene)
-        self._controller._rebuild_setup_graph()
-        self._controller.scene_changed.emit()
-        # Clear toolpaths since geometry changed
-        self._controller.clear_toolpaths()
-        self._controller.status_message.emit(f"Removed 2D geometry layer '{layer_name}'")
+    def _on_remove_2d(self) -> None:
+        """Remove the attached 2D geometry (via persistent binding + refs + toolpaths)."""
+        if self._controller.project is None:
+            return
+        if self._controller.scene is None:
+            self._controller.status_message.emit("Nessuna geometria 2D da rimuovere")
+            return
+        self._controller.remove_geometry_completely()
         self.refresh()
 
     def _on_edit_3d(self) -> None:

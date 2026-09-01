@@ -127,53 +127,21 @@ def _stock_center_xy(project: Project) -> tuple[float, float]:
 
 
 def _stock_origin_corner(project: Project) -> tuple[float, float, float]:
-    """Return the stock origin corner (where the red triad should be drawn) respecting Stock.origin.
+    """Return the stock origin point (where the red triad should be drawn).
 
-    The origin corner is the corner that represents the stock's origin as defined by Stock.origin:
-    - CENTER_XY_TOP_Z: position=center XY, top Z → origin at (-w/2, -l/2, pz + h/2)
-    - CORNER_XY_TOP_Z: position=corner XY, top Z → origin at (px, py, pz)
-    - CENTER_XY_ZERO_Z: position=center XY, zero Z → origin at (-w/2, -l/2, pz - h/2)
-    - CORNER_XY_ZERO_Z: position=corner XY, zero Z → origin at (px, py, pz)
+    Per ``Stock`` contract, ``position_x/y/z`` **is** the origin itself
+    (center or corner, top or zero per ``StockOrigin``), plus WCS offset.
+    This mirrors ``solid_placement.stock_origin_point``.
     """
     stock = project.stock
     offset_x = project.wcs.offset_x_mm
     offset_y = project.wcs.offset_y_mm
     offset_z = project.wcs.offset_z_mm
-    w = stock.width_mm
-    l = stock.length_mm
-    h = stock.height_mm
-    px = stock.position_x_mm + offset_x
-    py = stock.position_y_mm + offset_y
-    pz = stock.position_z_mm + offset_z
-
-    if stock.origin.value in ("center_xy_top_z", "corner_xy_top_z"):
-        # Origin is at TOP in Z (max_z)
-        if stock.origin.value in ("center_xy_top_z", "center_xy_zero_z"):
-            # Position is center XY
-            ox = px - w / 2.0
-            oy = py - l / 2.0
-        else:
-            # Position is corner XY
-            ox = px
-            oy = py
-        # For TOP_Z variants, origin is at top of stock
-        if stock.origin.value == "center_xy_top_z":
-            oz = pz + h / 2.0
-        else:  # corner_xy_top_z
-            oz = pz
-    else:  # zero_z variants
-        # Origin is at BOTTOM in Z (min_z)
-        if stock.origin.value in ("center_xy_zero_z", "corner_xy_zero_z"):
-            if stock.origin.value == "center_xy_zero_z":
-                # Position is center XY, zero Z
-                ox = px - w / 2.0
-                oy = py - l / 2.0
-            else:  # corner_xy_zero_z
-                ox = px
-                oy = py
-            oz = pz - h / 2.0 if stock.origin.value == "center_xy_zero_z" else pz
-
-    return (ox, oy, oz)
+    return (
+        float(stock.position_x_mm) + float(offset_x),
+        float(stock.position_y_mm) + float(offset_y),
+        float(stock.position_z_mm) + float(offset_z),
+    )
 
 
 @lru_cache(maxsize=32)
@@ -210,6 +178,9 @@ def default_layer_color(layer: str) -> RGBA:
 
 def geometry_to_scene(
     scene: GeometryScene,
+    placement: object | None = None,
+    stock: object | None = None,
+    wcs: object | None = None,
     *,
     color_for_layer: Callable[[str], RGBA] = default_layer_color,
     width_px: float = 2.0,
@@ -219,7 +190,33 @@ def geometry_to_scene(
     Entities are emitted in layer/insertion order (the same order used by
     ``create_geometry_ref``), so the picking index maps directly back to
     ``(layer, entity_index)``.  A multi-contour ``Path`` shares one picking id.
+    When ``placement`` (GeometryPlacement) is provided it is applied lazily
+    via ``geometry_placement.apply_placement`` and Z is shifted to
+    ``stock_top_z + z_offset_from_top_mm`` (positive offset raises geometry).
     """
+    # Lazy placement apply (avoid circular import)
+    if placement is not None:
+        try:
+            from antcam_rc2.core.project.geometry_placement import apply_placement as _apply_geo  # noqa: WPS433
+            from antcam_rc2.core.project.models import GeometryPlacement  # noqa: WPS433
+
+            if isinstance(placement, GeometryPlacement):
+                # stock/wcs may be None (fallback to manual only)
+                scene = _apply_geo(scene, placement, stock, wcs)  # type: ignore[arg-type]
+        except Exception:
+            pass
+    # Compute Z for flat 2D entities
+    z_for_points: float | None = None
+    if placement is not None:
+        try:
+            from antcam_rc2.core.project.geometry_placement import stock_top_z as _stock_top_z  # noqa: WPS433
+            from antcam_rc2.core.project.models import GeometryPlacement as _GP  # noqa: WPS433
+
+            if isinstance(placement, _GP) and stock is not None:
+                # Positive "Z offset from top" RAISES the geometry above the stock top.
+                z_for_points = float(_stock_top_z(stock, wcs)) + float(placement.z_offset_from_top_mm)  # type: ignore[arg-type]
+        except Exception:
+            pass
     nodes: list[RenderNode] = []
     picking: list[PickEntry] = []
     next_id = 1
@@ -229,6 +226,12 @@ def geometry_to_scene(
             kind, points = _entity_shape(entity, scene.tolerance_mm)
             if points is None:
                 continue
+            if z_for_points is not None:
+                # Shift Z from 0 to placed Z
+                pts = list(points)
+                for i in range(2, len(pts), 3):
+                    pts[i] = z_for_points
+                points = tuple(pts)
             nodes.append(
                 RenderNode(
                     kind=kind,

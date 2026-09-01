@@ -96,6 +96,12 @@ class ProjectController(QObject):
         self._solid_dialog_is_import: bool = False
         self._solid_dialog_prev_scene: SolidScene | None = None
         self._solid_dialog_prev_project: Project | None = None
+        # Modeless geometry placement dialog state
+        self._geometry_dialog = None  # type: ignore[var-annotated]
+        self._geometry_dialog_scene: GeometryScene | None = None
+        self._geometry_dialog_is_import: bool = False
+        self._geometry_dialog_prev_scene: GeometryScene | None = None
+        self._geometry_dialog_prev_project: Project | None = None
         self.geometry_import_controller.fixture_loaded.connect(self._on_fixture_loaded)
         self.geometry_import_controller.import_failed.connect(
             lambda message: self.status_message.emit(f"Import failed: {message}")
@@ -181,14 +187,119 @@ class ProjectController(QObject):
     def _on_geometry_imported(self, scene: GeometryScene) -> None:
         if self._project is None:
             return
-        self._center_geometry_in_stock(scene)
-        self._app.project_service.attach_geometry(self._project.id, scene)
-        self._scene = scene
-        self._geometry_graph = geometry_to_scene(scene)
-        self._rebuild_setup_graph()
+        # Open placement dialog (same for import and edit) with live preview
+        self._open_geometry_placement_dialog(scene, placement=None, is_import=True)
+
+    def edit_geometry_placement(self) -> None:
+        """Open shared placement dialog for already-attached geometry (modeless, live preview)."""
+        if self._project is None or self._scene is None:
+            self.status_message.emit("No 2D geometry to edit")
+            return
+        placement = self._project.geometry_placement
+        self._open_geometry_placement_dialog(self._scene, placement=placement, is_import=False)
+
+    def _open_geometry_placement_dialog(
+        self, scene: GeometryScene, *, placement: object | None, is_import: bool
+    ) -> None:
+        from antcam_rc2.core.project.models import GeometryPlacement as _GP
+        from antcam_rc2.frontends.pyside.dialogs.import_geometry_dialog import ImportGeometryDialog
+
+        if self._project is None:
+            return
+        if self._geometry_dialog is not None:
+            try:
+                self._geometry_dialog.close()
+            except Exception:
+                pass
+            self._geometry_dialog = None
+        typed_placement: _GP | None = placement if isinstance(placement, _GP) else None  # type: ignore[assignment]
+        dialog = ImportGeometryDialog(
+            self._viewport, scene=scene, stock=self._project.stock, wcs=self._project.wcs, placement=typed_placement
+        )
+        dialog.setModal(False)
+        self._geometry_dialog = dialog
+        self._geometry_dialog_scene = scene
+        self._geometry_dialog_is_import = is_import
+        self._geometry_dialog_prev_scene = self._scene
+        self._geometry_dialog_prev_project = self._project
+
+        initial = dialog.result_placement()
+        if is_import:
+            self._scene = scene
+        self._geometry_graph = geometry_to_scene(scene, initial, self._project.stock, self._project.wcs)
         self.scene_changed.emit()
-        self.clear_toolpaths()
-        self.status_message.emit(f"Imported {scene.source.path}")
+
+        def _on_preview_changed(obj: object) -> None:
+            try:
+                typed: _GP | None = obj if isinstance(obj, _GP) or obj is None else None  # type: ignore[no-redef]
+                if typed is None and obj is not None:
+                    return
+                # Need current project stock/wcs (may have changed? use stored)
+                proj = self._project if self._project is not None else self._geometry_dialog_prev_project
+                if proj is None:
+                    return
+                self._geometry_graph = geometry_to_scene(scene, typed, proj.stock, proj.wcs)
+                self.scene_changed.emit()
+            except Exception:
+                pass
+
+        def _on_finished(result: int) -> None:
+            dlg = self._geometry_dialog
+            if dlg is None:
+                return
+            try:
+                dlg.placement_changed.disconnect(_on_preview_changed)
+            except Exception:
+                pass
+            try:
+                dlg.finished.disconnect(_on_finished)
+            except Exception:
+                pass
+            self._geometry_dialog = None
+            accepted = result == 1  # QDialog.Accepted
+            if not accepted:
+                self._scene = self._geometry_dialog_prev_scene
+                self._project = self._geometry_dialog_prev_project  # type: ignore[assignment]
+                self._rebuild_geometry_graph()
+                self.scene_changed.emit()
+                self.status_message.emit("2D geometry import cancelled" if is_import else "2D placement edit cancelled")
+                return
+            final_placement = dlg.result_placement()
+            if is_import:
+                assert self._geometry_dialog_prev_project is not None
+                self._app.project_service.attach_geometry(
+                    self._geometry_dialog_prev_project.id, scene, final_placement
+                )
+                self._project = self._app.project_service.get_project(self._geometry_dialog_prev_project.id)
+                self._scene = scene
+            else:
+                assert self._project is not None
+                pid = self._project.id
+                pid = self._geometry_dialog_prev_project.id if self._geometry_dialog_prev_project is not None else pid  # type: ignore[union-attr]
+                self._app.project_service.replace_geometry_placement(pid, final_placement)
+                self._project = self._app.project_service.get_project(pid)
+            self._rebuild_geometry_graph()
+            self._rebuild_setup_graph()
+            self.scene_changed.emit()
+            self.clear_toolpaths()
+            if is_import:
+                self.status_message.emit(f"Imported {scene.source.path} ({len(list(scene.iter_entities()))} entities)")
+            else:
+                self.status_message.emit("2D placement updated")
+
+        dialog.placement_changed.connect(_on_preview_changed)
+        dialog.finished.connect(_on_finished)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _rebuild_geometry_graph(self) -> None:
+        """Rebuild geometry render graph from persisted placement (lazy apply)."""
+        if self._scene is None or self._project is None:
+            self._geometry_graph = RenderScene()
+            return
+        placement = self._project.geometry_placement
+        self._geometry_graph = geometry_to_scene(self._scene, placement, self._project.stock, self._project.wcs)
 
     def import_solid(self, path: Path) -> None:
         """Import a 3D solid (STEP/STL) with positioning dialog, centered on stock."""
@@ -419,6 +530,19 @@ class ProjectController(QObject):
         self.clear_toolpaths()
         self.status_message.emit("3D solid removed")
 
+    def remove_geometry_completely(self) -> None:
+        """Remove attached 2D geometry, all its refs and toolpaths."""
+        if self._project is None:
+            return
+        self._app.project_service.detach_geometry(self._project.id)
+        self._scene = None
+        self._geometry_graph = RenderScene()
+        self._reload_project()
+        self._rebuild_geometry_graph()
+        self.scene_changed.emit()
+        self.clear_toolpaths()
+        self.status_message.emit("2D geometry removed")
+
     def undo(self) -> None:
         if self._app.project_service.undo():
             self._reload_project()
@@ -596,8 +720,11 @@ class ProjectController(QObject):
         if self._scene is None and self._solid_scene is None:
             self.status_message.emit("Import geometry before generating a toolpath")
             return
-        # Allow 3D-only projects: fabricate an empty 2D scene like the CLI does.
         scene = self._scene
+        if scene is not None and project.geometry_placement is not None:
+            from antcam_rc2.core.project.geometry_placement import apply_placement as _apply_geo
+
+            scene = _apply_geo(scene, project.geometry_placement, project.stock, project.wcs)
         if scene is None:
             from antcam_rc2.core.io.diagnostics import ImportDiagnostics
             from antcam_rc2.core.io.scene import GeometryScene, SourceInfo
@@ -609,7 +736,6 @@ class ProjectController(QObject):
                 diagnostics=ImportDiagnostics(),
                 tolerance_mm=1e-6,
             )
-        # Pass placed solid scene (if any) so toolpath uses transformed feature coordinates.
         placed_solid = None
         if self._solid_scene is not None:
             from antcam_rc2.core.project.solid_placement import apply_placement
@@ -663,11 +789,13 @@ class ProjectController(QObject):
         self._selected_solid_features.clear()
         self._last_plan = None
         self._last_artifact = None
-        self._scene = None
+        self._scene = self._app.project_service.get_geometry_scene(project.id)  # type: ignore[assignment]
         # Restore transient solid from service (if any) and rebuild its graph.
         self._solid_scene = self._app.project_service.get_solid_scene(project.id)  # ty: ignore[invalid-assignment]
         self._geometry_graph = RenderScene()
         self._toolpath_graph = RenderScene()
+        if self._scene is not None:
+            self._rebuild_geometry_graph()
         self._rebuild_setup_graph()
         self._rebuild_solid_graph()
         self.project_opened.emit()
@@ -679,12 +807,14 @@ class ProjectController(QObject):
             return
         self._project = self._app.project_service.get_project(self._project.id)
         self._machine = self._app.catalog_repository.machine(self._project.machine_id)
-        # Keep solid scene in sync after undo/redo of placement/detach.
+        # Keep scenes in sync after undo/redo
+        svc_geo = self._app.project_service.get_geometry_scene(self._project.id)
+        self._scene = svc_geo  # type: ignore[assignment]
         svc_scene = self._app.project_service.get_solid_scene(self._project.id)
         self._solid_scene = svc_scene  # ty: ignore[invalid-assignment]
-        # If solid was detached, also clear highlight / stale refs
         if self._solid_scene is None:
             self._selected_solid_features.clear()
+        self._rebuild_geometry_graph()
         self._rebuild_setup_graph()
         self._rebuild_solid_graph()
         self.operations_changed.emit()

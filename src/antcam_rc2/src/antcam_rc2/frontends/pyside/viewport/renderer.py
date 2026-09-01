@@ -504,7 +504,11 @@ class Renderer:
         self._draw_solid("marker", view_projection, camera, lights, light_view_proj, blend=False)
         self._draw_solid("solid_translucent", view_projection, camera, lights, light_view_proj, blend=True)
         gl_log("after solids; error =", self._gl_error())
-        self._draw_lines(view_projection, camera.view_matrix(), "line")
+        # u_view must be identity: the vertex shader computes u_projection * u_view
+        # and u_projection already carries the full projection @ view (like solids/grid).
+        # Passing the raw view here applied the view transform TWICE, pushing line
+        # geometry (2D, toolpath) out of the frustum into a different, rotated space.
+        self._draw_lines(view_projection, np.eye(4), "line")
         gl_log("after lines; error =", self._gl_error())
         self._scene_fbo.release()
 
@@ -549,7 +553,9 @@ class Renderer:
         self._gl.glClearColor(0.0, 0.0, 0.0, 1.0)
         self._gl.glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         self._gl.glEnable(GL_DEPTH_TEST)
-        self._draw_lines(projection @ view, view, "picking")
+        # Same identity-u_view convention as the main line pass: the projection
+        # uniform already contains projection @ view.
+        self._draw_lines(projection @ view, np.eye(4), "picking")
         self._pick_fbo.release()
         image = self._pick_fbo.toImage()
         color = image.pixelColor(x, height - y - 1)

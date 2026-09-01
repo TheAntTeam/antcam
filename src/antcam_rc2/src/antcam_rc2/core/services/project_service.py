@@ -19,6 +19,7 @@ from antcam_rc2.core.project.geometry_refs import (
 )
 from antcam_rc2.core.project.models import (
     Fixture,
+    GeometryPlacement,
     GeometryRef,
     Operation,
     OperationParameters,
@@ -267,16 +268,65 @@ class ProjectService:
         self._commit(project, self._updated(project, machine_id=machine_id), f"Select machine '{machine_id}'")
         self._emit(MachineChanged(project_id=project.id, machine_id=machine_id))
 
-    def attach_geometry(self, project_id: str, scene: GeometryScene) -> None:
-        """Attach a transient scene and persist only its source/fingerprint binding.
+    def attach_geometry(
+        self, project_id: str, scene: GeometryScene, placement: GeometryPlacement | None = None
+    ) -> None:
+        """Attach a transient scene and persist binding + placement.
 
-        The index cache is invalidated explicitly: a re-attached scene (possibly
-        a new instance or a mutated one) must always be rebuilt.
+        ``placement`` defaults to the current project placement (kept) or None.
+        Stale ``geometry_refs`` are cleared atomically when the binding changes.
         """
         invalidate_scene_index_cache()
         project = self.get_project(project_id)
+        binding = bind_geometry(scene)
+        new_placement = placement if placement is not None else project.geometry_placement
+        needs_clear = project.geometry_binding is not None and project.geometry_binding != binding
+        if needs_clear and any(op.geometry_refs for op in project.operations):
+            operations: tuple[Operation, ...] = tuple(
+                op.model_copy(update={"geometry_refs": ()}) for op in project.operations
+            )
+            after = self._updated(
+                project, geometry_binding=binding, geometry_placement=new_placement, operations=operations
+            )
+        else:
+            after = self._updated(project, geometry_binding=binding, geometry_placement=new_placement)
         self._scenes[project_id] = scene
-        self._commit(project, self._updated(project, geometry_binding=bind_geometry(scene)), "Attach geometry")
+        self._commit(project, after, "Attach geometry")
+
+    def replace_geometry_placement(self, project_id: str, placement: GeometryPlacement | None) -> None:
+        """Replace the non-destructive geometry placement (undoable)."""
+        project = self.get_project(project_id)
+        self._commit(project, self._updated(project, geometry_placement=placement), "Set geometry placement")
+
+    def clear_geometry_refs(self, project_id: str) -> None:
+        """Remove every ``geometry_ref`` from all operations (undoable)."""
+        project = self.get_project(project_id)
+        if not any(op.geometry_refs for op in project.operations):
+            return
+        operations = tuple(op.model_copy(update={"geometry_refs": ()}) for op in project.operations)
+        self._commit(project, self._updated(project, operations=operations), "Clear geometry refs")
+
+    def detach_geometry(self, project_id: str) -> None:
+        """Remove the transient geometry scene and its persisted binding/placement (undoable)."""
+        project = self.get_project(project_id)
+        if project.geometry_binding is None and project.geometry_placement is None and project_id not in self._scenes:
+            return
+        invalidate_scene_index_cache()
+        self._scenes.pop(project_id, None)
+        if any(op.geometry_refs for op in project.operations):
+            operations: tuple[Operation, ...] = tuple(
+                op.model_copy(update={"geometry_refs": ()}) for op in project.operations
+            )
+            after = self._updated(
+                project, geometry_binding=None, geometry_placement=None, operations=operations
+            )
+        else:
+            after = self._updated(project, geometry_binding=None, geometry_placement=None)
+        self._commit(project, after, "Remove geometry")
+
+    def get_geometry_scene(self, project_id: str) -> GeometryScene | None:
+        """Return the attached transient GeometryScene for ``project_id``, if any."""
+        return self._scenes.get(project_id)
 
     def clear_solid_refs(self, project_id: str) -> None:
         """Remove every ``solid_ref`` from all operations (undoable)."""

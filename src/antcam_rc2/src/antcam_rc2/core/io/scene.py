@@ -133,6 +133,22 @@ class GeometryScene(BaseModel):
             result = result.union(box)
         return result
 
+    def apply_affine(self, affine) -> GeometryScene:
+        """Return a new scene with ``affine`` applied (non-destructive, for placement)."""
+        from antcam_rc2.core.geometry.transform import apply
+
+        new_layers: list[SceneLayer] = []
+        for layer in self.layers:
+            new_entities = [apply(affine, entity) for entity in layer.entities]
+            new_layers.append(SceneLayer(name=layer.name, color=layer.color, entities=new_entities))
+        return GeometryScene(
+            source=self.source,
+            units=self.units,
+            layers=new_layers,
+            diagnostics=self.diagnostics,
+            tolerance_mm=self.tolerance_mm,
+        )
+
     def translate(self, dx: float, dy: float) -> None:
         """Translate every entity by ``(dx, dy)`` millimetres (in place).
 

@@ -171,6 +171,36 @@ class SolidPlacement(_ProjectModel):
         return self
 
 
+class GeometryPlacement(_ProjectModel):
+    """Non-destructive placement for an imported 2D geometry.
+
+    ``offset_x_mm``/``offset_y_mm`` are manual XY translations when
+    ``auto_center_xy`` is False; when True they are ignored and recomputed
+    from stock center. ``z_offset_from_top_mm`` is an offset above the stock
+    top (0 == top surface, positive == raises the geometry, negative == below
+    the top). ``rotation_z_deg`` is rotation around Z through the geometry bbox
+    center. ``mirror_x``/``mirror_y`` flip the drawing. ``stock_origin``
+    records the StockOrigin used to compute the default placement (audit, like
+    SolidPlacement).
+    """
+
+    offset_x_mm: float = 0.0
+    offset_y_mm: float = 0.0
+    z_offset_from_top_mm: float = 0.0
+    rotation_z_deg: float = Field(default=0.0, ge=-360.0, le=360.0)
+    mirror_x: bool = False
+    mirror_y: bool = False
+    auto_center_xy: bool = True
+    stock_origin: StockOrigin = StockOrigin.CENTER_XY_TOP_Z
+
+    @model_validator(mode="after")
+    def _validate_finite(self) -> GeometryPlacement:
+        for v in (self.offset_x_mm, self.offset_y_mm, self.z_offset_from_top_mm, self.rotation_z_deg):
+            if not (v == v and abs(v) != float("inf")):
+                raise ValueError("GeometryPlacement values must be finite")
+        return self
+
+
 class SolidBinding(_ProjectModel):
     """Persistent provenance for a transient imported 3D solid scene."""
 
@@ -253,6 +283,7 @@ class Project(_ProjectModel):
     fixtures: tuple[Fixture, ...] = ()
     operations: tuple[Operation, ...] = ()
     geometry_binding: GeometryBinding | None = None
+    geometry_placement: GeometryPlacement | None = None
     solid_binding: SolidBinding | None = None
     solid_placement: SolidPlacement | None = None
 
