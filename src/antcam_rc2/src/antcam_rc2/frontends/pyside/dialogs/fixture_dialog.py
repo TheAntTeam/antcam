@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 from antcam_rc2.core.identifiers import new_id
 from antcam_rc2.core.project.fixture_library import FixtureLibrary
 from antcam_rc2.core.project.models import Fixture, FixtureKind
+from antcam_rc2.core.project.stock_geometry import stock_min_corner
 
 
 class FixtureDialog(QDialog):
@@ -39,10 +40,14 @@ class FixtureDialog(QDialog):
         *,
         fixture: Fixture | None = None,
         mesh_source: Path | None = None,
+        stock=None,
+        wcs=None,
     ) -> None:
         super().__init__(parent)
         self._fixture = fixture
         self._mesh_source = mesh_source
+        self._stock = stock
+        self._wcs = wcs
         self.setWindowTitle("Edit fixture" if fixture is not None else "Add fixture")
 
         layout = QVBoxLayout(self)
@@ -110,9 +115,14 @@ class FixtureDialog(QDialog):
         self._mesh_row = form.rowCount()
         form.addRow("Mesh", self._mesh_label)
 
-        form.addRow("Position X (mm)", self._position_x)
-        form.addRow("Position Y (mm)", self._position_y)
-        form.addRow("Position Z (mm)", self._position_z)
+        # Position fields with offset labels and absolute position tooltips
+        self._position_x = self._number(fixture.position_x_mm if fixture else 0.0, decimals=2)
+        self._position_y = self._number(fixture.position_y_mm if fixture else 0.0, decimals=2)
+        self._position_z = self._number(fixture.position_z_mm if fixture else 0.0, decimals=2)
+        self._update_position_tooltips()
+        form.addRow("Offset X from stock corner (mm)", self._position_x)
+        form.addRow("Offset Y from stock corner (mm)", self._position_y)
+        form.addRow("Offset Z from stock corner (mm)", self._position_z)
 
         layout.addLayout(form)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self)
@@ -121,6 +131,11 @@ class FixtureDialog(QDialog):
         layout.addWidget(buttons)
 
         self._kind.currentTextChanged.connect(self._on_kind_changed)
+
+        # Connect position changes to update tooltips
+        self._position_x.valueChanged.connect(self._update_position_tooltips)
+        self._position_y.valueChanged.connect(self._update_position_tooltips)
+        self._position_z.valueChanged.connect(self._update_position_tooltips)
 
         if fixture is not None:
             self._update_screw_visibility(fixture.kind)
@@ -226,6 +241,21 @@ class FixtureDialog(QDialog):
                                 label_widget = label_item.widget()
                                 if label_widget is not None:
                                     label_widget.setVisible(show_fixed_dims)
+
+    def _update_position_tooltips(self) -> None:
+        """Update tooltips on position spinboxes showing absolute WCS position."""
+        if self._stock is not None and self._wcs is not None:
+            stock_min_x, stock_min_y, stock_min_z = stock_min_corner(self._stock, self._wcs)
+            abs_x = stock_min_x + self._position_x.value()
+            abs_y = stock_min_y + self._position_y.value()
+            abs_z = stock_min_z + self._position_z.value()
+            self._position_x.setToolTip(f"Absolute X: {abs_x:.2f} mm")
+            self._position_y.setToolTip(f"Absolute Y: {abs_y:.2f} mm")
+            self._position_z.setToolTip(f"Absolute Z: {abs_z:.2f} mm")
+        else:
+            self._position_x.setToolTip("")
+            self._position_y.setToolTip("")
+            self._position_z.setToolTip("")
 
     def result_fixture(self) -> Fixture:
         """Return the edited fixture (reusing the id in edit mode).

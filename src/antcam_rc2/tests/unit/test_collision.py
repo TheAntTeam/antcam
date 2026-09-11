@@ -15,14 +15,14 @@ from antcam_rc2.core.toolpath.models import Position3
 
 
 def make_grid(resolution: float = 1.0) -> VoxelGrid:
-    stock = Stock(width_mm=30.0, length_mm=30.0, height_mm=10.0, material_id="aluminum_6061")
+    stock = Stock(width_mm=30.0, length_mm=30.0, height_mm=10.0, material_id="aluminum_6061", origin="corner_xy_zero_z")
     grid, _, _ = VoxelGrid.from_stock(stock, WorkCoordinateSystem(), resolution_mm=resolution)
     return grid
 
 
 def test_spindle_collides_with_stock_material_in_tall_stock(catalog_bundle) -> None:
     """A tool deep inside a tall stock collides when the spindle enters material."""
-    stock = Stock(width_mm=30.0, length_mm=30.0, height_mm=100.0, material_id="aluminum_6061")
+    stock = Stock(width_mm=30.0, length_mm=30.0, height_mm=100.0, material_id="aluminum_6061", origin="corner_xy_zero_z")
     grid, _, _ = VoxelGrid.from_stock(stock, WorkCoordinateSystem(), resolution_mm=1.0)
     assembly = ToolAssembly(catalog_bundle.tools["end_mill_3_175_2f"], catalog_bundle.machines["makera_z1"])
     # Tip 30 mm above the stock bottom: the spindle (tip + 46..146) overlaps the
@@ -35,7 +35,8 @@ def test_spindle_collides_with_stock_material_in_tall_stock(catalog_bundle) -> N
 
 
 def test_spindle_above_stock_does_not_collide(catalog_bundle) -> None:
-    grid = make_grid(1.0)
+    stock = Stock(width_mm=30.0, length_mm=30.0, height_mm=10.0, material_id="aluminum_6061", origin="corner_xy_zero_z")
+    grid, _, _ = VoxelGrid.from_stock(stock, WorkCoordinateSystem(), resolution_mm=1.0)
     assembly = ToolAssembly(catalog_bundle.tools["end_mill_3_175_2f"], catalog_bundle.machines["makera_z1"])
     tip = Position3(x_mm=15.0, y_mm=15.0, z_mm=10.0)  # tip at the stock top
     spindle = assembly.non_cutting_bodies()[2]
@@ -44,7 +45,8 @@ def test_spindle_above_stock_does_not_collide(catalog_bundle) -> None:
 
 def test_shank_never_checks_stock_material_by_design(catalog_bundle) -> None:
     """The shank occupies the hole it carved; the stock check must not flag it."""
-    grid = make_grid(1.0)
+    stock = Stock(width_mm=30.0, length_mm=30.0, height_mm=10.0, material_id="aluminum_6061", origin="corner_xy_zero_z")
+    grid, _, _ = VoxelGrid.from_stock(stock, WorkCoordinateSystem(), resolution_mm=1.0)
     assembly = ToolAssembly(catalog_bundle.tools["end_mill_3_175_2f"], catalog_bundle.machines["makera_z1"])
     shank = assembly.non_cutting_bodies()[0]
     tip = Position3(x_mm=15.0, y_mm=15.0, z_mm=-5.0)  # deep inside the stock
@@ -68,13 +70,18 @@ def test_fixture_collision(catalog_bundle) -> None:
         position_y_mm=0.0,
         position_z_mm=0.0,
     )
-    tip_near = Position3(x_mm=2.0, y_mm=2.0, z_mm=-8.0)  # shank spans z [4, 30] -> overlaps the fixture
-    hit = check_fixture(assembly.shank_body(), tip_near, (fixture,), margin=0.5)
+    stock = Stock(width_mm=30.0, length_mm=30.0, height_mm=10.0, material_id="aluminum_6061", origin="corner_xy_zero_z")
+    wcs = WorkCoordinateSystem()
+    # Tip at z=2mm: shank body (z_offset ~12-38) spans z [14, 40] from tip
+    # But fixture is at z=[0,5]. Need tip where shank overlaps fixture.
+    # Shank z_offset_min is around 12mm from tip. So tip at z=-10 -> shank at z=[2, 28] overlaps fixture at z=[0,5]
+    tip_near = Position3(x_mm=2.0, y_mm=2.0, z_mm=-10.0)
+    hit = check_fixture(assembly.shank_body(), tip_near, (fixture,), margin=0.5, project_stock=stock, project_wcs=wcs)
     assert hit is not None
     assert hit.code.value == "collision_fixture"
 
     tip_far = Position3(x_mm=25.0, y_mm=25.0, z_mm=10.0)
-    assert check_fixture(assembly.shank_body(), tip_far, (fixture,), margin=0.5) is None
+    assert check_fixture(assembly.shank_body(), tip_far, (fixture,), margin=0.5, project_stock=stock, project_wcs=wcs) is None
 
 
 def test_tip_outside_work_area(catalog_bundle) -> None:

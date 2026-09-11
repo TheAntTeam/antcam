@@ -10,7 +10,7 @@ from antcam_rc2.core.toolpath.models import MotionCommand, MotionKind, Position3
 
 
 def make_grid(resolution: float = 1.0) -> VoxelGrid:
-    stock = Stock(width_mm=30.0, length_mm=30.0, height_mm=10.0, material_id="aluminum_6061")
+    stock = Stock(width_mm=30.0, length_mm=30.0, height_mm=10.0, material_id="aluminum_6061", origin="corner_xy_zero_z")
     grid, _, _ = VoxelGrid.from_stock(stock, WorkCoordinateSystem(), resolution_mm=resolution)
     return grid
 

@@ -20,6 +20,7 @@ from antcam_rc2.core.geometry3d.scene import SolidScene
 from antcam_rc2.core.io.scene import GeometryScene
 from antcam_rc2.core.io3d import import_file_3d
 from antcam_rc2.core.project.models import FixtureKind, OperationType, Project
+from antcam_rc2.core.project.stock_geometry import stock_min_corner
 from antcam_rc2.core.rendering.scene_graph import (
     RGBA,
     NodeKind,
@@ -285,16 +286,18 @@ def setup_to_scene(
 
     nodes: list[RenderNode] = []
     meshes: list[RenderMesh] = []
-    offset_x = project.wcs.offset_x_mm
-    offset_y = project.wcs.offset_y_mm
-    offset_z = project.wcs.offset_z_mm
+
+    # Compute stock minimum corner once (anchor for fixture offsets)
+    stock_min_x, stock_min_y, stock_min_z = stock_min_corner(project.stock, project.wcs)
 
     # Compute stock bounds respecting Stock.origin
-    min_x, min_y, min_z, max_x, max_y, max_z = _stock_corner_bounds(project)
+    max_x = stock_min_x + float(stock.width_mm)
+    max_y = stock_min_y + float(stock.length_mm)
+    max_z = stock_min_z + float(stock.height_mm)
     stock_box = RenderBox(
-        min_x=min_x,
-        min_y=min_y,
-        min_z=min_z,
+        min_x=stock_min_x,
+        min_y=stock_min_y,
+        min_z=stock_min_z,
         max_x=max_x,
         max_y=max_y,
         max_z=max_z,
@@ -328,19 +331,20 @@ def setup_to_scene(
     logger.info("  Node created, picking_id=0")
 
     logger.info(f"--- PROCESSING FIXTURES ({len(project.fixtures)} fixtures) ---")
+
     for fixture in project.fixtures:
         logger.info(f"  Fixture: {fixture.name} (id={fixture.id}, kind={fixture.kind})")
         logger.info(
-            f"    Position (raw): x={fixture.position_x_mm}, y={fixture.position_y_mm}, z={fixture.position_z_mm}"
+            f"    Offset from stock corner: x={fixture.position_x_mm}, y={fixture.position_y_mm}, z={fixture.position_z_mm}"
         )
         logger.info(f"    Dimensions: w={fixture.width_mm}, l={fixture.length_mm}, h={fixture.height_mm}")
         if fixture.kind == FixtureKind.SCREW:
             # Render screw as cylinder
             radius = fixture.screw_diameter_mm / 2.0 if fixture.screw_diameter_mm else 3.0
             height = fixture.screw_length_mm if fixture.screw_length_mm else 20.0
-            center_x = fixture.position_x_mm + offset_x
-            center_y = fixture.position_y_mm + offset_y
-            base_z = fixture.position_z_mm + offset_z
+            center_x = stock_min_x + fixture.position_x_mm
+            center_y = stock_min_y + fixture.position_y_mm
+            base_z = stock_min_z + fixture.position_z_mm
             # Create cylinder as a mesh approximation (solid cylinder)
             cylinder_mesh = _create_cylinder_mesh(radius, height, 32)
             translated_vertices = _translate_vertices(
@@ -380,12 +384,12 @@ def setup_to_scene(
         else:
             # Regular box fixture
             fixture_box = RenderBox(
-                min_x=fixture.position_x_mm + offset_x,
-                min_y=fixture.position_y_mm + offset_y,
-                min_z=fixture.position_z_mm + offset_z,
-                max_x=fixture.position_x_mm + offset_x + fixture.width_mm,
-                max_y=fixture.position_y_mm + offset_y + fixture.length_mm,
-                max_z=fixture.position_z_mm + offset_z + fixture.height_mm,
+                min_x=stock_min_x + fixture.position_x_mm,
+                min_y=stock_min_y + fixture.position_y_mm,
+                min_z=stock_min_z + fixture.position_z_mm,
+                max_x=stock_min_x + fixture.position_x_mm + fixture.width_mm,
+                max_y=stock_min_y + fixture.position_y_mm + fixture.length_mm,
+                max_z=stock_min_z + fixture.position_z_mm + fixture.height_mm,
             )
             logger.info(
                 f"    Fixture RenderBox: min=({fixture_box.min_x:.3f}, {fixture_box.min_y:.3f}, {fixture_box.min_z:.3f}) max=({fixture_box.max_x:.3f}, {fixture_box.max_y:.3f}, {fixture_box.max_z:.3f})"
@@ -403,9 +407,9 @@ def setup_to_scene(
                             vertices, triangles = cached
                             translated_vertices = _translate_vertices(
                                 vertices,
-                                fixture.position_x_mm + offset_x,
-                                fixture.position_y_mm + offset_y,
-                                fixture.position_z_mm + offset_z,
+                                stock_min_x + fixture.position_x_mm,
+                                stock_min_y + fixture.position_y_mm,
+                                stock_min_z + fixture.position_z_mm,
                             )
                             meshes.append(
                                 RenderMesh(
@@ -440,6 +444,9 @@ def setup_to_scene(
     logger.info("--- PROCESSING MACHINE WORK AREA ---")
     if machine is not None:
         # Work area is defined in machine coordinates, offset by WCS
+        offset_x = project.wcs.offset_x_mm
+        offset_y = project.wcs.offset_y_mm
+        offset_z = project.wcs.offset_z_mm
         work_area = RenderBox(
             min_x=offset_x,
             min_y=offset_y,

@@ -18,6 +18,7 @@ def make_stock(**overrides: object) -> Stock:
         "position_y_mm": 2.0,
         "position_z_mm": 0.0,
         "material_id": "aluminum_6061",
+        "origin": "corner_xy_zero_z",
     }
     values.update(overrides)
     return Stock.model_validate(values)

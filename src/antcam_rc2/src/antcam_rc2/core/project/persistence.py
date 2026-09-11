@@ -12,14 +12,15 @@ from pydantic import Field
 
 from antcam_rc2.core.errors import ProjectError
 from antcam_rc2.core.project.models import CatalogSnapshot, Project, _ProjectModel
+from antcam_rc2.core.project.stock_geometry import stock_min_corner
 
-PROJECT_DOCUMENT_SCHEMA_VERSION = "1.0"
+PROJECT_DOCUMENT_SCHEMA_VERSION = "1.1"
 
 
 class ProjectDocument(_ProjectModel):
     """The complete portable JSON envelope for one project setup."""
 
-    schema_version: Literal["1.0"] = PROJECT_DOCUMENT_SCHEMA_VERSION
+    schema_version: Literal["1.1"] = PROJECT_DOCUMENT_SCHEMA_VERSION
     project: Project
     catalog_snapshot: CatalogSnapshot
     notes: str = Field(default="")
@@ -32,7 +33,46 @@ def dump_project_document(document: ProjectDocument) -> str:
 
 def load_project_document(payload: str | bytes) -> ProjectDocument:
     """Parse and validate one project document from JSON text."""
-    return ProjectDocument.model_validate_json(payload)
+    document = ProjectDocument.model_validate_json(payload)
+    return migrate_document(document)
+
+
+def migrate_document(document: ProjectDocument) -> ProjectDocument:
+    """Migrate project document from older schema versions to current.
+
+    Schema 1.0 -> 1.1: Fixture positions were absolute WCS coordinates.
+    Now they are offsets from stock minimum corner (left, front, bottom).
+    """
+    if document.schema_version == "1.1":
+        return document
+
+    # Schema 1.0 migration
+    if document.schema_version == "1.0":
+        project = document.project
+        if project.fixtures:
+            stock = project.stock
+            wcs = project.wcs
+            stock_min_x, stock_min_y, stock_min_z = stock_min_corner(stock, wcs)
+
+            migrated_fixtures = []
+            for fixture in project.fixtures:
+                # Old positions were absolute; convert to offset from stock corner
+                offset_x = fixture.position_x_mm - stock_min_x
+                offset_y = fixture.position_y_mm - stock_min_y
+                offset_z = fixture.position_z_mm - stock_min_z
+                migrated = fixture.model_copy(
+                    update={
+                        "position_x_mm": offset_x,
+                        "position_y_mm": offset_y,
+                        "position_z_mm": offset_z,
+                    }
+                )
+                migrated_fixtures.append(migrated)
+
+            project = project.model_copy(update={"fixtures": tuple(migrated_fixtures)})
+            document = document.model_copy(update={"project": project, "schema_version": "1.1"})
+
+    return document
 
 
 def write_project_document(destination: Path, document: ProjectDocument) -> None:

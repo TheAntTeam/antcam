@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from antcam_rc2.core.project.models import FixtureKind, Stock, StockOrigin
+from antcam_rc2.core.project.stock_geometry import stock_min_corner
 from antcam_rc2.frontends.pyside.controllers.project_controller import ProjectController
 
 
@@ -144,7 +145,13 @@ class ProjectPanel(QWidget):
             if origin_index >= 0:
                 self._origin.setCurrentIndex(origin_index)
             self._fixtures.clear()
+            project = self._controller.project
+            if project is not None:
+                stock_min_x, stock_min_y, stock_min_z = stock_min_corner(project.stock, project.wcs)
             for fixture in project.fixtures:
+                abs_x = stock_min_x + fixture.position_x_mm
+                abs_y = stock_min_y + fixture.position_y_mm
+                abs_z = stock_min_z + fixture.position_z_mm
                 if fixture.kind == FixtureKind.SCREW:
                     screw_info = ""
                     if fixture.screw_diameter_mm:
@@ -155,13 +162,15 @@ class ProjectPanel(QWidget):
                         screw_info += f" hole⌀{fixture.hole_diameter_mm:g}mm"
                     self._fixtures.addItem(
                         f"{fixture.name} ({fixture.kind.value}){screw_info} "
-                        f"@ ({fixture.position_x_mm:g}, {fixture.position_y_mm:g}, {fixture.position_z_mm:g})"
+                        f"offset ({fixture.position_x_mm:g}, {fixture.position_y_mm:g}, {fixture.position_z_mm:g}) "
+                        f"-> abs ({abs_x:.2f}, {abs_y:.2f}, {abs_z:.2f})"
                     )
                 else:
                     self._fixtures.addItem(
                         f"{fixture.name} ({fixture.kind.value}) "
                         f"{fixture.width_mm:g}×{fixture.length_mm:g}×{fixture.height_mm:g} mm "
-                        f"@ ({fixture.position_x_mm:g}, {fixture.position_y_mm:g}, {fixture.position_z_mm:g})"
+                        f"offset ({fixture.position_x_mm:g}, {fixture.position_y_mm:g}, {fixture.position_z_mm:g}) "
+                        f"-> abs ({abs_x:.2f}, {abs_y:.2f}, {abs_z:.2f})"
                     )
         finally:
             self._building = False
@@ -193,7 +202,7 @@ class ProjectPanel(QWidget):
             return
         from antcam_rc2.frontends.pyside.dialogs.fixture_dialog import FixtureDialog
 
-        dialog = FixtureDialog(self)
+        dialog = FixtureDialog(self, stock=self._controller.project.stock, wcs=self._controller.project.wcs)
         if dialog.exec():
             self._controller.add_fixture(dialog.result_fixture())
 
@@ -205,7 +214,7 @@ class ProjectPanel(QWidget):
         from antcam_rc2.frontends.pyside.dialogs.fixture_dialog import FixtureDialog
 
         fixture = project.fixtures[row]
-        dialog = FixtureDialog(self, fixture=fixture)
+        dialog = FixtureDialog(self, fixture=fixture, stock=project.stock, wcs=project.wcs)
         if dialog.exec():
             self._controller.replace_fixture(fixture.id, dialog.result_fixture())
 

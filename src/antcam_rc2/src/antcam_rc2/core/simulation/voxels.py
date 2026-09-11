@@ -13,6 +13,7 @@ import math
 import numpy as np
 
 from antcam_rc2.core.project.models import Stock, WorkCoordinateSystem
+from antcam_rc2.core.project.stock_geometry import stock_min_corner
 
 
 class VoxelGrid:
@@ -53,6 +54,9 @@ class VoxelGrid:
         derived from the stock volume and ``max_voxels`` when not requested,
         and clamped (with ``was_clamped=True``) when a requested resolution
         would exceed the voxel budget.
+
+        The grid origin is the stock minimum corner (left, front, bottom)
+        respecting ``Stock.origin`` and ``WorkCoordinateSystem`` offset.
         """
         width = max(stock.width_mm, 1e-9)
         length = max(stock.length_mm, 1e-9)
@@ -73,11 +77,7 @@ class VoxelGrid:
             max(1, math.ceil(length / resolution)),
             max(1, math.ceil(height / resolution)),
         )
-        origin = (
-            stock.position_x_mm + wcs.offset_x_mm,
-            stock.position_y_mm + wcs.offset_y_mm,
-            stock.position_z_mm + wcs.offset_z_mm,
-        )
+        origin = stock_min_corner(stock, wcs)
         grid = cls(
             origin=origin,
             voxel_size=resolution,

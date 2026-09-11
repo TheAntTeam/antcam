@@ -29,6 +29,7 @@ from antcam_rc2.core.project.models import (
     Stock,
 )
 from antcam_rc2.core.project.solid_refs import create_solid_ref
+from antcam_rc2.core.project.stock_geometry import stock_min_corner
 from antcam_rc2.core.rendering import (
     compose_scenes,
     geometry_to_scene,
@@ -601,7 +602,8 @@ class ProjectController(QObject):
             self.status_message.emit(f"Failed to import mesh: {exc}")
             return None
         bbox = scene.bounding_box()
-        center = bbox.center
+        # Default position: offset (10, 10, 0) from stock minimum corner
+        stock_min_x, stock_min_y, stock_min_z = stock_min_corner(self._project.stock, self._project.wcs)
         fixture = Fixture(
             id=new_id("fix"),
             name=path.stem,
@@ -609,15 +611,15 @@ class ProjectController(QObject):
             width_mm=bbox.width,
             length_mm=bbox.height,
             height_mm=bbox.depth,
-            position_x_mm=-center[0],
-            position_y_mm=-center[1],
-            position_z_mm=-center[2],
+            position_x_mm=10.0,
+            position_y_mm=10.0,
+            position_z_mm=0.0,
             mesh_path=None,  # Will be set by dialog after library copy
         )
         # Import FixtureDialog here to avoid circular import
         from antcam_rc2.frontends.pyside.dialogs.fixture_dialog import FixtureDialog
 
-        dialog = FixtureDialog(self._viewport, fixture=fixture, mesh_source=path)
+        dialog = FixtureDialog(self._viewport, fixture=fixture, mesh_source=path, stock=self._project.stock, wcs=self._project.wcs)
         if dialog.exec():
             created = dialog.result_fixture()
             self.add_fixture(created)
@@ -763,11 +765,7 @@ class ProjectController(QObject):
         if self._project is None:
             return
         stock = self._project.stock
-        origin = (
-            stock.position_x_mm + self._project.wcs.offset_x_mm,
-            stock.position_y_mm + self._project.wcs.offset_y_mm,
-            stock.position_z_mm + self._project.wcs.offset_z_mm,
-        )
+        origin = stock_min_corner(stock, self._project.wcs)
         grid = VoxelGrid(origin=origin, voxel_size=voxel_size, shape=mask.shape, occupied=mask)
         vertices, triangles = grid.surface_mesh()
         self._viewport.set_voxel_mesh(vertices, triangles, theme.SIMULATED_MATERIAL_COLOR)

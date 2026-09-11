@@ -99,6 +99,12 @@ class Stock(_ProjectModel):
 class Fixture(_ProjectModel):
     """A box-shaped workholding element; mesh loading for realistic rendering.
 
+    **Position semantics (schema v1.1+):** ``position_x_mm``, ``position_y_mm``,
+    ``position_z_mm`` are **offsets from the stock minimum corner** (left, front,
+    bottom) in WCS coordinates, respecting ``Stock.origin`` and ``WCS`` offset.
+    The absolute position is derived at runtime:
+    ``absolute = stock_min_corner(stock, wcs) + fixture.position``.
+
     If ``mesh_path`` is set and points to a valid STEP/STL file (relative to the
     fixture library meshes directory or absolute), the fixture is rendered as a
     mesh instead of a box. The mesh is translated to the fixture's position.

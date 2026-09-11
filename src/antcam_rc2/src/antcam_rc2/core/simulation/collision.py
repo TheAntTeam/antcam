@@ -29,6 +29,7 @@ import numpy as np
 
 from antcam_rc2.core.databases.models import MachineProfile
 from antcam_rc2.core.project.models import Fixture
+from antcam_rc2.core.project.stock_geometry import stock_min_corner
 from antcam_rc2.core.simulation.models import SimulationCode
 from antcam_rc2.core.simulation.tool_geometry import AssemblyBody, ToolAssembly
 from antcam_rc2.core.simulation.voxels import VoxelGrid
@@ -87,15 +88,21 @@ def check_fixture(
     tip: Position3,
     fixtures: tuple[Fixture, ...],
     margin: float,
+    project_stock: Stock,
+    project_wcs: WorkCoordinateSystem,
 ) -> CollisionHit | None:
-    """Cylinder-vs-box test against every fixture (AABB pre-filter then precise)."""
+    """Cylinder-vs-box test against every fixture (AABB pre-filter then precise).
+
+    Fixture positions are offsets from stock minimum corner.
+    """
+    stock_min_x, stock_min_y, stock_min_z = stock_min_corner(project_stock, project_wcs)
     z_lo = tip.z_mm + body.z_offset_min - margin
     z_hi = tip.z_mm + body.z_offset_max + margin
     radius = body.radius + margin
     for fixture in fixtures:
-        box_x0 = fixture.position_x_mm
-        box_y0 = fixture.position_y_mm
-        box_z0 = fixture.position_z_mm
+        box_x0 = stock_min_x + fixture.position_x_mm
+        box_y0 = stock_min_y + fixture.position_y_mm
+        box_z0 = stock_min_z + fixture.position_z_mm
         box_x1 = box_x0 + fixture.width_mm
         box_y1 = box_y0 + fixture.length_mm
         box_z1 = box_z0 + fixture.height_mm
@@ -151,14 +158,16 @@ def check_collisions(
     tip: Position3,
     fixtures: tuple[Fixture, ...],
     margin: float,
+    project_stock: Stock,
+    project_wcs: WorkCoordinateSystem,
 ) -> list[CollisionHit]:
     """Run every applicable check for the current tool position."""
     hits: list[CollisionHit] = []
     for body in assembly.non_cutting_bodies():
         if body.name == "shank":
-            hit = check_fixture(body, tip, fixtures, margin)
+            hit = check_fixture(body, tip, fixtures, margin, project_stock, project_wcs)
         else:
-            hit = check_stock_material(grid, body, tip, margin) or check_fixture(body, tip, fixtures, margin)
+            hit = check_stock_material(grid, body, tip, margin) or check_fixture(body, tip, fixtures, margin, project_stock, project_wcs)
         if hit is not None:
             hits.append(hit)
     return hits

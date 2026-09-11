@@ -4,30 +4,34 @@ from __future__ import annotations
 
 from antcam_rc2.core.errors import ToolpathError
 from antcam_rc2.core.project.models import Stock, StockOrigin, WorkCoordinateSystem
+from antcam_rc2.core.project.stock_geometry import (
+    stock_min_corner,
+    stock_max_corner,
+    stock_center_xy,
+    stock_top_z,
+    stock_bottom_z,
+)
 
 
 def stock_top_z_mm(stock: Stock, wcs: WorkCoordinateSystem) -> float:
     """Return the absolute Z of the stock top face in WCS coordinates."""
-    return stock.position_z_mm + wcs.offset_z_mm + stock.height_mm
+    return stock_top_z(stock, wcs)
 
 
 def stock_bottom_z_mm(stock: Stock, wcs: WorkCoordinateSystem) -> float:
     """Return the absolute Z of the stock bottom face in WCS coordinates."""
-    return stock.position_z_mm + wcs.offset_z_mm
+    return stock_bottom_z(stock, wcs)
 
 
 def stock_center_xy_mm(stock: Stock, wcs: WorkCoordinateSystem) -> tuple[float, float]:
     """Return the absolute XY center of the stock in WCS coordinates."""
-    center_x = stock.position_x_mm + wcs.offset_x_mm + stock.width_mm / 2.0
-    center_y = stock.position_y_mm + wcs.offset_y_mm + stock.length_mm / 2.0
-    return center_x, center_y
+    return stock_center_xy(stock, wcs)
 
 
 def stock_corner_xy_mm(stock: Stock, wcs: WorkCoordinateSystem) -> tuple[float, float]:
     """Return the absolute XY corner (min) of the stock in WCS coordinates."""
-    corner_x = stock.position_x_mm + wcs.offset_x_mm
-    corner_y = stock.position_y_mm + wcs.offset_y_mm
-    return corner_x, corner_y
+    min_x, min_y, _ = stock_min_corner(stock, wcs)
+    return min_x, min_y
 
 
 def calculate_stock_origin_position(stock: Stock, wcs: WorkCoordinateSystem) -> tuple[float, float, float]:

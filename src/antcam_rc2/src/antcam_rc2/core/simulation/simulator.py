@@ -16,6 +16,7 @@ import numpy as np
 
 from antcam_rc2.core.databases.repository import CatalogRepository
 from antcam_rc2.core.project.models import Fixture, Project
+from antcam_rc2.core.project.stock_geometry import stock_min_corner, stock_top_z
 from antcam_rc2.core.simulation.collision import (
     check_collisions,
     check_reach,
@@ -129,7 +130,7 @@ class Simulator:
 
         fixtures = _effective_fixtures(project)
         machine = self._catalogs.machine(project.machine_id)
-        stock_top_z = project.stock.position_z_mm + project.wcs.offset_z_mm + project.stock.height_mm
+        stock_top = stock_top_z(project.stock, project.wcs)
         margin = max(settings.collision_margin_mm, used_resolution)
 
         timeline: list[SimulationTick] = []
@@ -207,7 +208,7 @@ class Simulator:
                         removed = remove_motion(grid, current, motion, assembly.cutter_body(), used_resolution)
                         accumulator.removed_voxels += removed
                         total_removed_mm3 = grid.removed_voxels * (used_resolution**3)
-                        depth = stock_top_z - motion.endpoint.z_mm
+                        depth = stock_top - motion.endpoint.z_mm
                         if depth > accumulator.max_depth_reached_mm:
                             accumulator.max_depth_reached_mm = depth
                         hit = check_reach(depth, assembly, margin)
@@ -226,13 +227,13 @@ class Simulator:
                             collision_count += 1
                         accumulator.duration_estimate_s += _motion_duration(current, motion)
                         collision_count += _append_checks(
-                            events, grid, assembly, fixtures, motion.endpoint, margin, tick, motion_index, operation.id
+                            events, grid, assembly, fixtures, motion.endpoint, margin, tick, motion_index, operation.id, project.stock, project.wcs
                         )
                     else:
                         # Rapids never remove material; sample the path for collisions.
                         for sample in _subdivide(current, motion, used_resolution)[1:]:
                             collision_count += _append_checks(
-                                events, grid, assembly, fixtures, sample, margin, tick, motion_index, operation.id
+                                events, grid, assembly, fixtures, sample, margin, tick, motion_index, operation.id, project.stock, project.wcs
                             )
                     work_area_hit = check_tip_in_work_area(motion.endpoint, machine, margin)
                     if work_area_hit is not None and not outside_reported:
@@ -402,19 +403,12 @@ def _path_length(start: Position3, motion: MotionCommand) -> float:
 
 
 def _effective_fixtures(project: Project) -> tuple[Fixture, ...]:
-    ox = project.wcs.offset_x_mm
-    oy = project.wcs.offset_y_mm
-    oz = project.wcs.offset_z_mm
-    return tuple(
-        fixture.model_copy(
-            update={
-                "position_x_mm": fixture.position_x_mm + ox,
-                "position_y_mm": fixture.position_y_mm + oy,
-                "position_z_mm": fixture.position_z_mm + oz,
-            }
-        )
-        for fixture in project.fixtures
-    )
+    """Return fixtures with positions relative to stock minimum corner.
+
+    The collision module now computes absolute positions from stock-relative offsets.
+    This function returns the original fixtures unchanged.
+    """
+    return project.fixtures
 
 
 def _append_checks(
@@ -427,10 +421,12 @@ def _append_checks(
     tick: int,
     motion_index: int,
     operation_id: str,
+    project_stock: Stock,
+    project_wcs: WorkCoordinateSystem,
 ) -> int:
     """Append collision events for one tool position; returns how many."""
     count = 0
-    for hit in check_collisions(grid, assembly, tip, fixtures, margin):
+    for hit in check_collisions(grid, assembly, tip, fixtures, margin, project_stock, project_wcs):
         severity = (
             SimulationSeverity.CRITICAL
             if hit.code in {SimulationCode.COLLISION_FIXTURE, SimulationCode.COLLISION_STOCK_MATERIAL}
