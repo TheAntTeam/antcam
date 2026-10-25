@@ -70,7 +70,7 @@ def detect_features(
         plane_z = _plane_z(mesh, face_indices, outward)
 
         loops = _boundary_loops(faces[face_indices])
-        loops = sorted(loops, key=_loop_area, reverse=True)
+        loops = sorted(loops, key=lambda loop: _loop_area(mesh, loop, outward), reverse=True)
         for loop_index, loop in enumerate(loops):
             if loop_index == 0:
                 features.append(
@@ -309,8 +309,11 @@ def _trace_loops(edges: set[tuple[int, int]]) -> list[np.ndarray]:
         while current not in visited:
             visited.add(current)
             loop.append(current)
-            next_vertex = next(neighbor for neighbor in adjacency[current] if neighbor != previous)
-            previous, current = current, next_vertex
+            candidates = [neighbor for neighbor in adjacency[current] if neighbor != previous]
+            if not candidates:
+                # Open/non-manifold boundary: stop instead of raising.
+                break
+            previous, current = current, candidates[0]
         if len(loop) >= 3:
             loops.append(np.asarray(loop, dtype=np.int64))
     return loops
@@ -326,12 +329,30 @@ def _outer_boundary(mesh: TriMesh, faces: np.ndarray, normal: np.ndarray) -> tup
     loops = _boundary_loops(faces)
     if not loops:
         return ()
-    loops = sorted(loops, key=_loop_area, reverse=True)
+    loops = sorted(loops, key=lambda loop: _loop_area(mesh, loop, normal), reverse=True)
     return _loop_points(mesh, loops[0], normal)
 
 
-def _loop_area(loop: np.ndarray) -> float:
-    return float(len(loop))
+def _loop_area(mesh: TriMesh, loop: np.ndarray, normal: np.ndarray) -> float:
+    """Area of a closed boundary loop, projected on the feature plane.
+
+    Uses the shoelace formula in 3D so the outer contour (largest area) is
+    always identified as the perimeter and the inner loops as holes.  A
+    vertex-count heuristic is not reliable: a finely tessellated hole can have
+    more vertices than a simple outer boundary and would be mistaken for the
+    perimeter (and vice versa).
+    """
+    if len(loop) < 3:
+        return 0.0
+    axis = np.asarray(normal, dtype=np.float64)
+    length = float(np.linalg.norm(axis))
+    if length < 1e-12:
+        return 0.0
+    points = mesh.vertices[loop]
+    shifted = points - points.mean(axis=0)
+    rolled = np.roll(shifted, -1, axis=0)
+    accumulator = np.cross(shifted, rolled).sum(axis=0)
+    return abs(float(np.dot(accumulator, axis / length))) / 2.0
 
 
 def _fit_circle(mesh: TriMesh, loop: np.ndarray) -> tuple[np.ndarray, float, float]:

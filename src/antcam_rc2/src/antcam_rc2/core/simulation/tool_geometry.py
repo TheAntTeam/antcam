@@ -14,6 +14,8 @@ import math
 from dataclasses import dataclass
 from enum import StrEnum
 
+import numpy as np
+
 from antcam_rc2.core.databases.models import MachineProfile, Tool, ToolType
 
 _COLLET_HOLDER_LENGTH_MM = 8.0
@@ -142,4 +144,66 @@ class ToolAssembly:
         return self.tool.flute_length_mm
 
 
-__all__ = ["AssemblyBody", "BodyShape", "ToolAssembly"]
+def _revolve_profile(profile: list[tuple[float, float]], segments: int) -> tuple[np.ndarray, np.ndarray]:
+    """Revolve a ``(z, radius)`` profile around Z into a triangle mesh."""
+    rings: list[tuple[float, float]] = [(float(z), float(r)) for z, r in profile]
+    vertices: list[tuple[float, float, float]] = []
+    for z, radius in rings:
+        for index in range(segments):
+            angle = 2.0 * math.pi * index / segments
+            vertices.append((radius * math.cos(angle), radius * math.sin(angle), z))
+    triangles: list[tuple[int, int, int]] = []
+    for ring in range(len(rings) - 1):
+        base0, base1 = ring * segments, (ring + 1) * segments
+        for index in range(segments):
+            nxt = (index + 1) % segments
+            triangles.append((base0 + index, base1 + index, base1 + nxt))
+            triangles.append((base0 + index, base1 + nxt, base0 + nxt))
+    if rings[0][1] > 1e-9:  # bottom cap (flat tools)
+        center = len(vertices)
+        vertices.append((0.0, 0.0, rings[0][0]))
+        for index in range(segments):
+            triangles.append((center, index, (index + 1) % segments))
+    if rings[-1][1] > 1e-9:  # top cap
+        center = len(vertices)
+        vertices.append((0.0, 0.0, rings[-1][0]))
+        base = (len(rings) - 1) * segments
+        for index in range(segments):
+            nxt = (index + 1) % segments
+            triangles.append((center, base + nxt, base + index))
+    return np.asarray(vertices, dtype=np.float64), np.asarray(triangles, dtype=np.int64)
+
+
+def _cutter_profile(cutter: AssemblyBody, steps: int) -> list[tuple[float, float]]:
+    """Sample a cutter body into ``(z, radius)`` points, resolving its shape.
+
+    The sampling is shape-aware: a ball nose gets enough points across the
+    small hemispherical tip (a coarse linear sampling turned it into a cone),
+    a V-bit is a straight cone and a cylinder needs only its two ends.
+    """
+    flute = cutter.z_offset_max
+    if cutter.shape is BodyShape.BALL_CAP:
+        points = [(cutter.radius * index / steps, 0.0) for index in range(steps + 1)]
+        return [(z, max(0.0, cutter.radius_at(z))) for z, _ in points] + [(flute, cutter.radius_at(flute))]
+    if cutter.shape is BodyShape.CONE:
+        return [(0.0, 0.0), (flute, cutter.radius_at(flute))]
+    return [(0.0, cutter.radius), (flute, cutter.radius)]
+
+
+def assembly_marker_mesh(assembly: ToolAssembly, segments: int = 28, steps: int = 8) -> tuple[np.ndarray, np.ndarray]:
+    """A revolved mesh of the tool (cutter + shank), tip at the origin, +Z up.
+
+    The profile follows the actual tool shape: cylinder (end mill), cone
+    (V-bit), ball cap (ball nose) and the shank above the flutes.
+    """
+    cutter = assembly.cutter_body()
+    shank = assembly.shank_body()
+    flute = cutter.z_offset_max
+    profile = _cutter_profile(cutter, steps)
+    if shank.z_offset_max > flute:
+        profile.append((flute, shank.radius))
+        profile.append((shank.z_offset_max, shank.radius))
+    return _revolve_profile(profile, segments)
+
+
+__all__ = ["AssemblyBody", "BodyShape", "ToolAssembly", "assembly_marker_mesh"]

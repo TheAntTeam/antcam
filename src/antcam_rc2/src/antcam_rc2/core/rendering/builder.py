@@ -12,11 +12,13 @@ from collections.abc import Callable
 from functools import lru_cache
 from pathlib import Path as PathLib
 
+import numpy as np
+
 from antcam_rc2.core.databases.models import MachineProfile
 from antcam_rc2.core.geometry.curves import Arc, Circle, Curve2, LineSegment
 from antcam_rc2.core.geometry.paths import Contour, Path
 from antcam_rc2.core.geometry.primitives import Point2
-from antcam_rc2.core.geometry3d.scene import SolidScene
+from antcam_rc2.core.geometry3d.scene import FeatureKind, SolidScene
 from antcam_rc2.core.io.scene import GeometryScene
 from antcam_rc2.core.io3d import import_file_3d
 from antcam_rc2.core.project.models import FixtureKind, OperationType, Project
@@ -765,7 +767,88 @@ def _opaque(color: RGBA) -> RGBA:
     return (color[0], color[1], color[2], 1.0)
 
 
-_SOLID_SELECTION_COLOR: RGBA = (0.30, 0.64, 1.0, 1.0)
+_SOLID_COLOR: RGBA = (0.72, 0.73, 0.76, 1.0)
+_SOLID_SELECTION_FILL: RGBA = (0.20, 0.58, 1.0, 1.0)
+_SOLID_SELECTION_COLOR: RGBA = (1.0, 0.62, 0.10, 1.0)
+
+
+def _highlight_dimensions(scene: SolidScene) -> tuple[float, float]:
+    """Return ``(normal_offset_mm, half_width_mm)`` for the selection ribbons.
+
+    Both scale with the scene diagonal so the highlight keeps the same visual
+    weight across part sizes: the offset lifts the ribbon off the face (no
+    z-fighting) while the width controls how boldly the edge reads.
+    """
+    box = scene.bounding_box()
+    if box.is_empty:
+        return 0.01, 0.2
+    diagonal = math.sqrt(box.width**2 + box.height**2 + box.depth**2)
+    offset = max(0.005, min(0.5, diagonal * 0.0006))
+    half_width = max(0.08, min(1.2, diagonal * 0.003))
+    return offset, half_width
+
+
+def _highlight_ribbon(
+    points: tuple[tuple[float, float, float], ...],
+    normal: tuple[float, float, float],
+    half_width: float,
+    offset: float,
+) -> RenderMesh | None:
+    """Closed miter-joined ribbon mesh along a boundary loop.
+
+    A core-profile GL line cannot be wider than one pixel, so a thick,
+    visible edge has to be real geometry.  The loop is pushed ``offset`` along
+    the feature normal (otherwise it is coplanar with the face and the depth
+    test hides it) and extruded to ``half_width`` on both sides, with miter
+    joins so corners stay continuous.  It is flagged ``overlay`` so the
+    viewport draws it unlit with the accent color.
+    """
+    vertices_pts = [np.asarray(point, dtype=np.float64) for point in points]
+    if len(vertices_pts) >= 2 and np.allclose(vertices_pts[0], vertices_pts[-1]):
+        vertices_pts = vertices_pts[:-1]
+    count = len(vertices_pts)
+    if count < 2:
+        return None
+    axis = np.asarray(normal, dtype=np.float64)
+    axis_length = float(np.linalg.norm(axis))
+    if axis_length < 1e-12:
+        return None
+    axis = axis / axis_length
+    shifted = [point + axis * offset for point in vertices_pts]
+
+    sides: list[np.ndarray] = []
+    for index in range(count):
+        edge = shifted[(index + 1) % count] - shifted[index]
+        edge_length = float(np.linalg.norm(edge))
+        sides.append(np.cross(axis, edge / edge_length) if edge_length > 1e-12 else np.zeros(3))
+
+    flat_vertices: list[float] = []
+    for index in range(count):
+        previous_side = sides[(index - 1) % count]
+        next_side = sides[index]
+        miter = previous_side + next_side
+        miter_length = float(np.linalg.norm(miter))
+        if miter_length < 1e-9:
+            miter, scale = next_side, 1.0
+        else:
+            miter = miter / miter_length
+            scale = min(2.5, 1.0 / max(float(np.dot(miter, next_side)), 0.4))
+        reach = miter * (half_width * scale)
+        flat_vertices.extend(float(value) for value in shifted[index] + reach)
+        flat_vertices.extend(float(value) for value in shifted[index] - reach)
+
+    flat_triangles: list[int] = []
+    for index in range(count):
+        nxt = (index + 1) % count
+        outer_index, inner_index = 2 * index, 2 * index + 1
+        outer_next, inner_next = 2 * nxt, 2 * nxt + 1
+        flat_triangles.extend((outer_index, outer_next, inner_next, outer_index, inner_next, inner_index))
+    return RenderMesh(
+        vertices=tuple(flat_vertices),
+        triangles=tuple(flat_triangles),
+        color=_SOLID_SELECTION_COLOR,
+        overlay=True,
+    )
 
 
 def solid_to_scene(
@@ -777,9 +860,17 @@ def solid_to_scene(
 
     If ``placement`` (SolidPlacement) is provided, the scene is transformed
     via ``apply_placement`` before flattening — the raw ``SolidScene`` stays
-    immutable. When ``selected`` contains ``(body_index, feature_index)`` pairs
-    an accent ``LINE_STRIP`` overlay is emitted for each selected feature
-    boundary so the viewport can highlight it.
+    immutable.
+
+    Highlighting is feature-kind aware, matching how CAM/CAD treats selections:
+
+    * ``FACE_PLANAR`` — the face triangles are **pulled out of the body's base
+      mesh and re-emitted as a lit accent mesh** (surface selection without
+      z-fighting).
+    * ``PERIMETER`` / ``HOLE`` — only the **boundary edges** are drawn, as a
+      thick unlit accent ribbon (``overlay`` mesh): a contour is not a surface,
+      so the planar group it belongs to is left untouched.  The ribbon is
+      nudged along the feature normal so the depth test cannot hide it.
     """
     if placement is not None:
         # Lazy import to avoid circular dependency (models -> geometry3d).
@@ -793,57 +884,82 @@ def solid_to_scene(
                 scene = apply_placement(scene, placement)
         except Exception:
             pass
+    # Only FACE_PLANAR selections tint a surface: a perimeter or a hole is a
+    # contour of edges, not a face, so it must not colour the whole planar
+    # group it belongs to.  Their edges are drawn as outlines further down.
+    selected_triangles: dict[int, set[int]] = {}
+    for body_index, feature_index in selected or ():
+        if 0 <= body_index < len(scene.bodies):
+            features = scene.bodies[body_index].features
+            if 0 <= feature_index < len(features) and features[feature_index].kind is FeatureKind.FACE_PLANAR:
+                selected_triangles.setdefault(body_index, set()).update(features[feature_index].triangles)
+
+    edge_offset, half_width = _highlight_dimensions(scene)
+
     meshes: list[RenderMesh] = []
     for body_index, body in enumerate(scene.bodies):
         vertices = tuple(float(value) for value in body.mesh.vertices.reshape(-1).tolist())
-        triangles = tuple(int(value) for value in body.mesh.faces.reshape(-1).tolist())
+        faces = body.mesh.faces
+        picked = selected_triangles.get(body_index)
+        if picked:
+            mask = np.zeros(len(faces), dtype=bool)
+            valid = [index for index in picked if 0 <= index < len(faces)]
+            if valid:
+                mask[valid] = True
+            base = faces[~mask]
+            highlight = faces[mask]
+            if len(base):
+                meshes.append(
+                    RenderMesh(
+                        vertices=vertices,
+                        triangles=tuple(int(value) for value in base.reshape(-1).tolist()),
+                        color=_SOLID_COLOR,
+                        picking_id=body_index + 1,
+                    )
+                )
+            if len(highlight):
+                meshes.append(
+                    RenderMesh(
+                        vertices=vertices,
+                        triangles=tuple(int(value) for value in highlight.reshape(-1).tolist()),
+                        color=_SOLID_SELECTION_FILL,
+                        picking_id=body_index + 1,
+                    )
+                )
+            continue
         meshes.append(
             RenderMesh(
                 vertices=vertices,
-                triangles=triangles,
-                color=(0.72, 0.73, 0.76, 1.0),
+                triangles=tuple(int(value) for value in faces.reshape(-1).tolist()),
+                color=_SOLID_COLOR,
                 picking_id=body_index + 1,
             )
         )
-    nodes: list[RenderNode] = []
-    if selected:
-        for body_index, feature_index in selected:
-            if 0 <= body_index < len(scene.bodies):
-                body = scene.bodies[body_index]
-                if 0 <= feature_index < len(body.features):
-                    feature = body.features[feature_index]
-                    boundary = feature.boundary
-                    if boundary:
-                        pts = [(float(x), float(y), float(z)) for x, y, z in boundary]
-                        # Close loop for rendering
-                        if pts and pts[0] != pts[-1]:
-                            pts.append(pts[0])
-                        nodes.append(
-                            RenderNode(
-                                kind=NodeKind.LINE_STRIP,
-                                points=flat_points(pts),
-                                color=_SOLID_SELECTION_COLOR,
-                                width_px=3.0,
-                            )
-                        )
-                    elif feature.center is not None and feature.radius is not None:
-                        # Fallback for HOLE without boundary (should not happen): draw circle
-                        cx, cy = feature.center
-                        r = float(feature.radius)
-                        z = float(feature.plane_z_mm)
-                        circle_pts = [
-                            (cx + r * math.cos(2 * math.pi * i / 32), cy + r * math.sin(2 * math.pi * i / 32), z)
-                            for i in range(33)
-                        ]
-                        nodes.append(
-                            RenderNode(
-                                kind=NodeKind.LINE_STRIP,
-                                points=flat_points(circle_pts),
-                                color=_SOLID_SELECTION_COLOR,
-                                width_px=3.0,
-                            )
-                        )
-    return RenderScene(nodes=tuple(nodes), meshes=tuple(meshes))
+    for body_index, feature_index in selected or ():
+        if not (0 <= body_index < len(scene.bodies)):
+            continue
+        body = scene.bodies[body_index]
+        if not (0 <= feature_index < len(body.features)):
+            continue
+        feature = body.features[feature_index]
+        loop = feature.boundary
+        if not loop and feature.center is not None and feature.radius is not None:
+            # Fallback for a HOLE without an explicit boundary loop.
+            cx, cy = feature.center
+            radius = float(feature.radius)
+            z = float(feature.plane_z_mm)
+            loop = tuple(
+                (
+                    cx + radius * math.cos(2.0 * math.pi * i / 32),
+                    cy + radius * math.sin(2.0 * math.pi * i / 32),
+                    z,
+                )
+                for i in range(32)
+            )
+        ribbon = _highlight_ribbon(loop, feature.plane_normal, half_width, edge_offset)
+        if ribbon is not None:
+            meshes.append(ribbon)
+    return RenderScene(meshes=tuple(meshes))
 
 
 def compose_scenes(*scenes: RenderScene) -> RenderScene:

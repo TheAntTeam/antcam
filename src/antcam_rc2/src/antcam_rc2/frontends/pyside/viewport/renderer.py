@@ -27,6 +27,7 @@ from antcam_rc2.frontends.pyside.viewport.buffers import (
     ground_vertices,
     line_vertices,
     mesh_vertices,
+    overlay_vertices,
     solid_vertices,
     unit_box_mesh,
 )
@@ -44,6 +45,7 @@ _GRID_MAJOR_SPACING_MM = 50.0
 _BACKGROUND_TOP = (0.060, 0.065, 0.080)
 _BACKGROUND_BOTTOM = (0.170, 0.180, 0.220)
 _GROUND_COLOR = (0.20, 0.21, 0.24)
+_TOOLPATH_GHOST_COLOR = (0.62, 0.66, 0.72, 0.30)
 
 # OpenGL enum values: PySide6 >= 6.11 does not expose GL_* constants on
 # QOpenGLFunctions, so the renderer uses the stable spec literals.
@@ -114,21 +116,39 @@ def _set_uniform_vector(program, location: int, values: list) -> None:
 
 
 def _render_mesh_vertices(scene: RenderScene) -> np.ndarray:
-    """Concatenate the render-graph mesh nodes into one solid-pipeline array."""
-    if not scene.meshes:
-        return np.empty((0, 10), dtype=np.float32)
+    """Concatenate the lit render-graph meshes into one solid-pipeline array."""
     blocks: list[np.ndarray] = []
     for mesh in scene.meshes:
+        if mesh.overlay:  # drawn by the unlit highlight pipeline instead
+            continue
         vertices = np.asarray(mesh.vertices, dtype=np.float64).reshape(-1, 3)
         triangles = np.asarray(mesh.triangles, dtype=np.int64).reshape(-1, 3)
         blocks.append(mesh_vertices(vertices, triangles, mesh.color))
+    if not blocks:
+        return np.empty((0, 10), dtype=np.float32)
     return np.concatenate(blocks, axis=0)
 
 
 class Renderer:
     """Owns every GL resource and draws one :class:`RenderScene` per frame."""
 
-    _PIPELINES = ("line", "solid", "solid_translucent", "picking", "mesh", "marker", "axes")
+    _PIPELINES = (
+        "line",
+        "solid",
+        "solid_translucent",
+        "picking",
+        "mesh",
+        "marker",
+        "axes",
+        "highlight",
+        "toolpath",
+        "toolpath_ghost",
+        "voxel",
+    )
+    # Pipelines whose vertex layout is (position, normal, color) and are drawn
+    # with the lit "solid" program.  Missing one here binds it to the flat line
+    # program, leaving the normal/color attributes unset (black geometry).
+    _SOLID_PIPELINES = frozenset({"solid", "solid_translucent", "mesh", "marker", "voxel"})
 
     def __init__(self) -> None:
         self._programs: dict[str, QOpenGLShaderProgram] = {}
@@ -153,6 +173,8 @@ class Renderer:
         self._shadow_fbo: QOpenGLFramebufferObject | None = None
         self._pick_fbo: QOpenGLFramebufferObject | None = None
         self._viewport = QSize(1, 1)
+        self._stock_visible = True
+        self._simulation_active = False
         self._gl = None
 
     # ------------------------------------------------------------------ setup
@@ -304,7 +326,17 @@ class Renderer:
     def set_scene(self, scene: RenderScene, box: RenderBox | None = None) -> None:
         """Upload (or refresh) every vertex buffer for a render scene."""
         gl_log("set_scene: uploading scene buffers...")
-        self._upload("line", line_vertices(scene), layout=((0, 3), (1, 4)), stride=8)
+        self._upload("line", line_vertices(scene, toolpath=False), layout=((0, 3), (1, 4)), stride=8)
+        self._upload("toolpath", line_vertices(scene, toolpath=True), layout=((0, 3), (1, 4)), stride=8)
+        # Faint copy of the whole toolpath, drawn without depth while simulating:
+        # the depth-tested pass hides everything inside the opaque material, so
+        # the user could not see the full path anymore.
+        self._upload(
+            "toolpath_ghost",
+            line_vertices(scene, toolpath=True, color_override=_TOOLPATH_GHOST_COLOR),
+            layout=((0, 3), (1, 4)),
+            stride=8,
+        )
         self._upload("solid", solid_vertices(scene, translucent_only=False), layout=((0, 3), (1, 3), (2, 4)), stride=10)
         self._upload(
             "solid_translucent",
@@ -315,6 +347,12 @@ class Renderer:
         self._upload("picking", line_vertices(scene, picking=True), layout=((0, 3), (1, 4)), stride=7)
         mesh_data = _render_mesh_vertices(scene)
         self._upload("mesh", mesh_data, layout=((0, 3), (1, 3), (2, 4)), stride=10)
+        self._upload(
+            "highlight",
+            overlay_vertices(scene),
+            layout=((0, 3), (1, 4)),
+            stride=7,
+        )
         grid = (
             grid_vertices(box, _GRID_SPACING_MM, major_spacing_mm=_GRID_MAJOR_SPACING_MM)
             if box is not None
@@ -327,19 +365,48 @@ class Renderer:
         self._upload_ground(box)
 
     def set_voxel_mesh(self, vertices, triangles, color) -> None:
-        """Upload a voxel surface mesh (solid pipeline, lit)."""
-        self._upload("mesh", mesh_vertices(vertices, triangles, color), layout=((0, 3), (1, 3), (2, 4)), stride=10)
+        """Upload the simulated material surface on its own pipeline.
+
+        The voxel mesh must NOT share the ``mesh`` pipeline with the render
+        scene: uploading it used to overwrite the part, and clearing it (reset)
+        wiped the part mesh out of the viewport.  It is drawn flat and unlit
+        (position + color) so the carved material is always clearly visible.
+        """
+        # Lit (position, normal, color): shading is what makes the carved
+        # pocket readable on an opaque stock.
+        self._upload("voxel", mesh_vertices(vertices, triangles, color), layout=((0, 3), (1, 3), (2, 4)), stride=10)
+
+    def set_stock_visible(self, visible: bool) -> None:
+        """Hide the translucent stock box while the voxel material stands in for it.
+
+        During simulation the opaque voxel surface *is* the stock being carved;
+        keeping the static translucent box on top hid/veiled the carving.
+        """
+        self._stock_visible = visible
+        self._simulation_active = not visible
 
     def set_tool_marker(
-        self, position: tuple[float, float, float] | None, size_mm: float = 4.0, color=(0.95, 0.3, 0.3, 1.0)
+        self,
+        position: tuple[float, float, float] | None,
+        size_mm: float = 4.0,
+        color=(0.95, 0.3, 0.3, 1.0),
+        mesh: tuple[np.ndarray, np.ndarray] | None = None,
     ) -> None:
-        """Upload a small tool marker box at ``position`` (``None`` hides it)."""
+        """Upload the tool marker at ``position`` (``None`` hides it).
+
+        ``mesh`` is an optional prebuilt tool-shaped mesh (tip at the origin);
+        when omitted a small box is drawn.
+        """
         if position is None:
             self._upload("marker", np.empty((0, 10), dtype=np.float32), layout=((0, 3), (1, 3), (2, 4)), stride=10)
             return
-        corners, triangles = unit_box_mesh(size_mm, color)
-        corners = corners + np.asarray(position, dtype=np.float64)
-        self._upload("marker", mesh_vertices(corners, triangles, color), layout=((0, 3), (1, 3), (2, 4)), stride=10)
+        if mesh is not None:
+            vertices, triangles = mesh
+            color = (0.80, 0.82, 0.86, 1.0)  # steel tool body
+        else:
+            vertices, triangles = unit_box_mesh(size_mm, color)
+        placed = np.asarray(vertices, dtype=np.float64) + np.asarray(position, dtype=np.float64)
+        self._upload("marker", mesh_vertices(placed, triangles, color), layout=((0, 3), (1, 3), (2, 4)), stride=10)
 
     def _upload(self, name: str, data: np.ndarray, *, stride: int, layout: tuple) -> None:
         vbo = self._vbos[name]
@@ -355,11 +422,7 @@ class Renderer:
         vao = self._vaos[name]
         vao.bind()
         vbo.bind()
-        program = (
-            self._programs["solid"]
-            if name in {"solid", "solid_translucent", "mesh", "marker"}
-            else self._programs["line"]
-        )
+        program = self._programs["solid"] if name in self._SOLID_PIPELINES else self._programs["line"]
         program.bind()
         offset = 0
         for location, size in layout:
@@ -501,14 +564,29 @@ class Renderer:
         self._gl.glEnable(GL_DEPTH_TEST)
         self._draw_solid("solid", view_projection, camera, lights, light_view_proj, blend=False)
         self._draw_solid("mesh", view_projection, camera, lights, light_view_proj, blend=False)
-        self._draw_solid("marker", view_projection, camera, lights, light_view_proj, blend=False)
-        self._draw_solid("solid_translucent", view_projection, camera, lights, light_view_proj, blend=True)
+        self._draw_solid("voxel", view_projection, camera, lights, light_view_proj, blend=False)
+        # Highlight ribbons go over the part but under the translucent stock, so
+        # the stock keeps blending on top of them (like it does with the body).
+        self._draw_highlight(view_projection)
+        # In simulation the tool must be occluded by the material (a depth-less
+        # draw made it look like it was showing through the opaque stock).
+        self._draw_solid(
+            "marker", view_projection, camera, lights, light_view_proj, blend=False, depth=self._simulation_active
+        )
+        if self._stock_visible:
+            self._draw_solid("solid_translucent", view_projection, camera, lights, light_view_proj, blend=True)
         gl_log("after solids; error =", self._gl_error())
         # u_view must be identity: the vertex shader computes u_projection * u_view
         # and u_projection already carries the full projection @ view (like solids/grid).
         # Passing the raw view here applied the view transform TWICE, pushing line
         # geometry (2D, toolpath) out of the frustum into a different, rotated space.
         self._draw_lines(view_projection, np.eye(4), "line")
+        # Outside simulation the toolpath is drawn on top (its cuts run inside an
+        # opaque part).  While simulating, the opaque voxel *is* the material,
+        # so the path is depth-tested and gets hidden where it is inside it.
+        self._draw_lines(view_projection, np.eye(4), "toolpath", depth=self._simulation_active)
+        if self._simulation_active:
+            self._draw_ghost(view_projection, "toolpath_ghost")
         gl_log("after lines; error =", self._gl_error())
         self._scene_fbo.release()
 
@@ -568,7 +646,12 @@ class Renderer:
         Translucent stock/fixtures still cast a shadow, matching the plan's
         'soft shadows' look; the mesh (simulated material) casts too.
         """
-        casters = self._counts.get("solid", 0) + self._counts.get("solid_translucent", 0) + self._counts.get("mesh", 0)
+        casters = (
+            self._counts.get("solid", 0)
+            + self._counts.get("solid_translucent", 0)
+            + self._counts.get("mesh", 0)
+            + self._counts.get("voxel", 0)
+        )
         if self._shadow_fbo is None or casters == 0:
             return
         self._shadow_fbo.bind()
@@ -580,7 +663,10 @@ class Renderer:
         program = self._programs["shadow"]
         program.bind()
         _set_uniform(self._gl, program, "u_light_view_projection", light_view_projection)
-        for pipeline in ("solid", "solid_translucent", "mesh"):
+        shadow_pipelines = ["solid", "mesh", "voxel"]
+        if self._stock_visible:
+            shadow_pipelines.append("solid_translucent")
+        for pipeline in shadow_pipelines:
             count = self._counts.get(pipeline, 0)
             if count == 0:
                 continue
@@ -599,6 +685,7 @@ class Renderer:
         light_view_proj,
         *,
         blend: bool,
+        depth: bool = True,
     ) -> None:
         count = self._counts.get(pipeline, 0)
         if count == 0:
@@ -630,17 +717,66 @@ class Renderer:
             # Keep depth mask TRUE for translucent objects so they write depth
             # and properly occlude geometry behind them (grid, ground).
             # Standard alpha blending requires depth writes + back-to-front render order.
+        if not depth:
+            # The tool marker sits inside the material (at the cut depth), so a
+            # depth-tested pass would hide it.  Draw it on top instead.
+            self._gl.glDisable(GL_DEPTH_TEST)
         self._gl.glDrawArrays(GL_TRIANGLES, 0, count)
+        if not depth:
+            self._gl.glEnable(GL_DEPTH_TEST)
         if blend:
             self._gl.glDepthMask(True)
             self._gl.glDisable(GL_BLEND)
         self._vaos[pipeline].release()
         program.release()
 
-    def _draw_lines(self, view_projection: np.ndarray, view: np.ndarray, pipeline: str) -> None:
+    def _draw_ghost(self, view_projection: np.ndarray, pipeline: str) -> None:
+        """Draw a blended, depth-less copy of the toolpath (x-ray overview)."""
         count = self._counts.get(pipeline, 0)
         if count == 0:
             return
+        program = self._programs["line"]
+        program.bind()
+        self._vaos[pipeline].bind()
+        _set_uniform(self._gl, program, "u_view", np.eye(4))
+        _set_uniform(self._gl, program, "u_projection", view_projection)
+        self._gl.glEnable(GL_BLEND)
+        self._gl.glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        self._gl.glDisable(GL_DEPTH_TEST)
+        self._gl.glDrawArrays(GL_LINES, 0, count)
+        self._gl.glEnable(GL_DEPTH_TEST)
+        self._gl.glDisable(GL_BLEND)
+        self._vaos[pipeline].release()
+        program.release()
+
+    def _draw_highlight(self, view_projection: np.ndarray) -> None:
+        """Draw the unlit selection-highlight ribbons over the shaded scene.
+
+        The flat line program keeps the accent bright regardless of lighting,
+        which is what makes selected edges stand out from the solid.
+        """
+        count = self._counts.get("highlight", 0)
+        if count == 0:
+            return
+        program = self._programs["line"]
+        program.bind()
+        self._vaos["highlight"].bind()
+        _set_uniform(self._gl, program, "u_view", np.eye(4))
+        _set_uniform(self._gl, program, "u_projection", view_projection)
+        # Ribbons are nudged off the surface; keep the depth buffer untouched so
+        # later passes (toolpath lines) still resolve correctly.
+        self._gl.glDepthMask(False)
+        self._gl.glDrawArrays(GL_TRIANGLES, 0, count)
+        self._gl.glDepthMask(True)
+        self._vaos["highlight"].release()
+        program.release()
+
+    def _draw_lines(self, view_projection: np.ndarray, view: np.ndarray, pipeline: str, *, depth: bool = True) -> None:
+        count = self._counts.get(pipeline, 0)
+        if count == 0:
+            return
+        if not depth:
+            self._gl.glDisable(GL_DEPTH_TEST)
         program = self._programs["line"]
         program.bind()
         self._vaos[pipeline].bind()
@@ -650,6 +786,8 @@ class Renderer:
         self._gl.glDrawArrays(GL_LINES, 0, count)
         self._vaos[pipeline].release()
         program.release()
+        if not depth:
+            self._gl.glEnable(GL_DEPTH_TEST)
 
     def _draw_background(self) -> None:
         """Draw a fullscreen vertical-gradient background into the scene FBO."""

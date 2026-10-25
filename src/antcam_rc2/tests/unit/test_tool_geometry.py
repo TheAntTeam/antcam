@@ -2,9 +2,23 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
-from antcam_rc2.core.simulation.tool_geometry import BodyShape, ToolAssembly
+from antcam_rc2.core.simulation.tool_geometry import BodyShape, ToolAssembly, assembly_marker_mesh
+
+
+def test_assembly_marker_mesh_follows_the_tool_shape(catalog_bundle) -> None:
+    tool = catalog_bundle.tools["end_mill_3_175_2f"]
+    machine = catalog_bundle.machines["makera_z1"]
+    vertices, triangles = assembly_marker_mesh(ToolAssembly(tool, machine))
+    assert vertices.shape[1] == 3 and triangles.shape[1] == 3
+    assert len(triangles) > 0
+    # Tip at z=0, top at the overall length, radius matches the widest body.
+    assert float(vertices[:, 2].min()) == pytest.approx(0.0, abs=1e-6)
+    assert float(vertices[:, 2].max()) == pytest.approx(tool.overall_length_mm, abs=1e-6)
+    widest = max(tool.cutting_diameter_mm, tool.shank_diameter_mm) / 2.0
+    assert float(np.hypot(vertices[:, 0], vertices[:, 1]).max()) == pytest.approx(widest, abs=1e-6)
 
 
 def test_cylinder_radius_is_constant(catalog_bundle) -> None:

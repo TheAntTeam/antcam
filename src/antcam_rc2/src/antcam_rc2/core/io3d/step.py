@@ -7,6 +7,7 @@ is raised while STL import keeps working.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import numpy as np
@@ -19,8 +20,39 @@ from antcam_rc2.core.geometry3d.scene import SolidBody, SolidScene, SolidSourceI
 __all__ = ["import_step"]
 
 
+def _build_mesh_params(tolerance_mm: float, angular_deflection_rad: float) -> object | None:
+    """Build OCP meshing parameters selecting the fast Delabella mesher.
+
+    OCCT 7.7+ ships two Delaunay implementations: the legacy incremental
+    ``Watson`` (default) and the newer ``Delabella``.  Watson degrades to
+    O(n^2) on co-circular boundary points (e.g. planar faces with circular
+    holes), which dominates STEP import time; Delabella stays near
+    O(n log n) and produces an equivalent mesh (same triangle and feature
+    counts) while being order-of-magnitude faster.  Returns ``None`` when the
+    installed OCP does not expose Delabella, so the caller can fall back to the
+    legacy ``BRepMesh_IncrementalMesh(shape, deflection, ...)`` overload.
+    """
+    try:
+        from OCP.IMeshTools import IMeshTools_MeshAlgoType, IMeshTools_Parameters
+    except ImportError:  # pragma: no cover - OCP without IMeshTools
+        return None
+    algo = getattr(IMeshTools_MeshAlgoType, "IMeshTools_MeshAlgoType_Delabella", None)
+    if algo is None:  # pragma: no cover - OCP < 7.7
+        return None
+    params = IMeshTools_Parameters()
+    params.Deflection = tolerance_mm
+    params.Angle = angular_deflection_rad
+    params.InParallel = True
+    params.MeshAlgo = algo
+    return params
+
+
 def import_step(path: str | Path, *, tolerance_mm: float = 0.05, angular_deflection_deg: float = 0.5) -> SolidScene:
-    """Import a STEP solid by tessellating it into triangle meshes."""
+    """Import a STEP solid by tessellating it into triangle meshes.
+
+    Uses OCP's Delabella mesher when available (see :func:`_build_mesh_params`);
+    falls back to the default incremental mesher on older OCP builds.
+    """
     try:
         from OCP.BRepMesh import BRepMesh_IncrementalMesh
         from OCP.IFSelect import IFSelect_RetDone
@@ -45,10 +77,14 @@ def import_step(path: str | Path, *, tolerance_mm: float = 0.05, angular_deflect
     if not solids:
         solids = [shape]
 
+    angular_deflection_rad = math.radians(angular_deflection_deg)
+    mesh_params = _build_mesh_params(tolerance_mm, angular_deflection_rad)
+
     for body_index, solid in enumerate(solids):
-        BRepMesh_IncrementalMesh(
-            solid, tolerance_mm, False, angular_deflection_deg * 0.017453292519943295, True
-        ).Perform()
+        if mesh_params is not None:
+            BRepMesh_IncrementalMesh(solid, mesh_params).Perform()
+        else:  # pragma: no cover - fallback for OCP without Delabella
+            BRepMesh_IncrementalMesh(solid, tolerance_mm, False, angular_deflection_rad, True).Perform()
         vertices, faces = _tessellate_solid(solid)
         if not faces:
             warnings.append(f"body {body_index}: no triangles produced")

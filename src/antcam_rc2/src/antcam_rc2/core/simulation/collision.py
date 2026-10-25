@@ -95,7 +95,18 @@ def check_fixture(
 
     Fixture positions are offsets from stock minimum corner.
     """
-    stock_min_x, stock_min_y, stock_min_z = stock_min_corner(project_stock, project_wcs)
+    return _check_fixture_at(body, tip, fixtures, margin, stock_min_corner(project_stock, project_wcs))
+
+
+def _check_fixture_at(
+    body: AssemblyBody,
+    tip: Position3,
+    fixtures: tuple[Fixture, ...],
+    margin: float,
+    stock_origin: tuple[float, float, float],
+) -> CollisionHit | None:
+    """Fixture check with a precomputed stock-minimum corner (hot path)."""
+    stock_min_x, stock_min_y, stock_min_z = stock_origin
     z_lo = tip.z_mm + body.z_offset_min - margin
     z_hi = tip.z_mm + body.z_offset_max + margin
     radius = body.radius + margin
@@ -140,34 +151,45 @@ def check_tip_in_work_area(tip: Position3, machine: MachineProfile, margin: floa
 
 def check_reach(depth_mm: float, assembly: ToolAssembly, margin: float) -> CollisionHit | None:
     """A deterministic rule: the cut depth must not exceed the flute reach."""
-    if depth_mm <= assembly.max_reach_mm() + margin:
+    reach = assembly.max_reach_mm()
+    if depth_mm <= reach + margin:
         return None
     return CollisionHit(
         code=SimulationCode.REACH_EXCEEDED,
         body_name="cutter",
         position=Position3(),
-        message=(
-            f"cut depth {depth_mm:.2f} mm exceeds flute reach {assembly.max_reach_mm():.2f} mm + margin {margin:.2f} mm"
-        ),
+        message=f"cut depth {depth_mm:.2f} mm exceeds flute reach {reach:.2f} mm + margin {margin:.2f} mm",
     )
 
 
 def check_collisions(
     grid: VoxelGrid,
-    assembly: ToolAssembly,
+    non_cutting: tuple[AssemblyBody, ...],
     tip: Position3,
     fixtures: tuple[Fixture, ...],
     margin: float,
     project_stock: Stock,
     project_wcs: WorkCoordinateSystem,
+    *,
+    stock_origin: tuple[float, float, float] | None = None,
 ) -> list[CollisionHit]:
-    """Run every applicable check for the current tool position."""
+    """Run every applicable check for the current tool position.
+
+    ``non_cutting`` is the assembly's non-cutting stack (shank/holder/spindle),
+    passed in so the caller computes it once per operation instead of once per
+    motion; ``stock_origin`` may be supplied to skip recomputing the stock
+    minimum corner on every motion.
+    """
+    if stock_origin is None:
+        stock_origin = stock_min_corner(project_stock, project_wcs)
     hits: list[CollisionHit] = []
-    for body in assembly.non_cutting_bodies():
+    for body in non_cutting:
         if body.name == "shank":
-            hit = check_fixture(body, tip, fixtures, margin, project_stock, project_wcs)
+            hit = _check_fixture_at(body, tip, fixtures, margin, stock_origin)
         else:
-            hit = check_stock_material(grid, body, tip, margin) or check_fixture(body, tip, fixtures, margin, project_stock, project_wcs)
+            hit = check_stock_material(grid, body, tip, margin) or _check_fixture_at(
+                body, tip, fixtures, margin, stock_origin
+            )
         if hit is not None:
             hits.append(hit)
     return hits

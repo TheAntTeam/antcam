@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from antcam_rc2.core.errors import ProjectError
 from antcam_rc2.core.project.models import CatalogSnapshot, Project, Stock
 from antcam_rc2.core.project.persistence import (
     PROJECT_DOCUMENT_SCHEMA_VERSION,
@@ -47,6 +48,15 @@ def test_project_document_round_trips_stably_and_writes_atomically(tmp_path: Pat
     assert read_project_document(destination) == document
     assert load_project_document(dump_project_document(document)) == document
     assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_read_project_document_rejects_non_file(tmp_path: Path) -> None:
+    # A cancelled file dialog used to pass "." here and blow up with a
+    # PermissionError; it must be a clear domain error instead.
+    with pytest.raises(ProjectError, match="not a file"):
+        read_project_document(tmp_path)  # a directory
+    with pytest.raises(ProjectError, match="not a file"):
+        read_project_document(tmp_path / "missing.antcam.json")
 
 
 def test_project_document_rejects_unknown_schema_and_invalid_json() -> None:

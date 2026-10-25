@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from antcam_rc2.core.geometry3d.features import detect_features
+from antcam_rc2.core.geometry3d.features import _loop_area, detect_features
 from antcam_rc2.core.geometry3d.mesh import TriMesh
 from antcam_rc2.core.geometry3d.picking import ray_mesh_hit
 from antcam_rc2.core.geometry3d.scene import FeatureKind, SolidBody, SolidScene, SolidSourceInfo
@@ -124,6 +124,23 @@ def test_detect_ring_face_finds_hole_and_perimeter() -> None:
     assert len(holes) == 1
     assert holes[0].radius == pytest.approx(5.0, abs=0.15)
     assert len(perimeters) == 1
+
+
+def test_loop_area_uses_geometry_not_vertex_count() -> None:
+    # The perimeter must be the outer loop by *area*: a finely tessellated hole
+    # can have many more vertices than a coarse outer boundary.
+    outer = np.array([[0.0, 0.0, 0.0], [20.0, 0.0, 0.0], [20.0, 20.0, 0.0], [0.0, 20.0, 0.0]])
+    angles = np.linspace(0.0, 2.0 * np.pi, 64, endpoint=False)
+    inner = np.column_stack([10.0 + 5.0 * np.cos(angles), 10.0 + 5.0 * np.sin(angles), np.zeros(64)])
+    vertices = np.vstack([outer, inner])
+    mesh = TriMesh(vertices=vertices, faces=np.zeros((0, 3), dtype=np.int64))
+
+    outer_area = _loop_area(mesh, np.arange(0, 4), (0.0, 0.0, 1.0))
+    inner_area = _loop_area(mesh, np.arange(4, 68), (0.0, 0.0, 1.0))
+    assert outer_area == pytest.approx(400.0, abs=1e-6)
+    assert inner_area == pytest.approx(np.pi * 25.0, abs=0.5)
+    # 4 vertices beat 64 because the geometric area is what decides.
+    assert outer_area > inner_area
 
 
 def test_scene_fingerprint_stable() -> None:

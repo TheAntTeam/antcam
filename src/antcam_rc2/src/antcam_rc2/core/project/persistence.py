@@ -104,6 +104,8 @@ def write_project_document(destination: Path, document: ProjectDocument) -> None
 
 def read_project_document(source: Path) -> ProjectDocument:
     """Read and validate a project document from a UTF-8 JSON file."""
+    if not source.is_file():
+        raise ProjectError(f"project document is not a file: {source}")
     try:
         payload = source.read_text(encoding="utf-8")
     except OSError as exc:

@@ -5,8 +5,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from antcam_rc2.frontends.pyside.viewport.camera import OrbitCamera
 from antcam_rc2.core.rendering.scene_graph import RenderBox
+from antcam_rc2.frontends.pyside.app_window import _scene_extent_changed
+from antcam_rc2.frontends.pyside.viewport.camera import OrbitCamera
 
 
 class TestViewportAutoFit:
@@ -76,6 +77,29 @@ class TestViewportAutoFit:
 
         # With fitted camera, at least 6 of 8 corners should be visible
         assert visible_count >= 6, f"Expected at least 6 visible corners with fitted camera, got {visible_count}"
+
+
+class TestSceneExtentRefit:
+    """Selection must not reset the camera: only a real extent change refits."""
+
+    def test_first_scene_always_refits(self) -> None:
+        assert _scene_extent_changed((0.0, 0.0, 0.0, 100.0, 100.0, 20.0), None) is True
+
+    def test_identical_extent_does_not_refit(self) -> None:
+        box = (0.0, 0.0, 0.0, 100.0, 100.0, 20.0)
+        assert _scene_extent_changed(box, box) is False
+
+    def test_tiny_outline_offset_does_not_refit(self) -> None:
+        # A feature-selection outline nudged off the surface moves the box by
+        # ~0.05% of the span: far below the 1% tolerance.
+        before = (0.0, 0.0, 0.0, 100.0, 100.0, 20.0)
+        after = (0.0, 0.0, -0.05, 100.0, 100.0, 20.05)
+        assert _scene_extent_changed(after, before) is False
+
+    def test_imported_content_refits(self) -> None:
+        before = (0.0, 0.0, 0.0, 100.0, 100.0, 20.0)
+        after = (0.0, 0.0, 0.0, 200.0, 100.0, 20.0)
+        assert _scene_extent_changed(after, before) is True
 
 
 if __name__ == "__main__":

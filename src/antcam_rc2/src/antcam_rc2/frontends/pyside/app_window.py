@@ -18,13 +18,29 @@ from PySide6.QtWidgets import (
 
 from antcam_rc2.frontends.pyside.controllers.project_controller import ProjectController
 from antcam_rc2.frontends.pyside.dialogs.new_project_dialog import NewProjectDialog
-from antcam_rc2.frontends.pyside.panels.geometries_panel import GeometriesPanel
-from antcam_rc2.frontends.pyside.panels.operations_panel import OperationsPanel
-from antcam_rc2.frontends.pyside.panels.parameters_panel import ParametersPanel
+from antcam_rc2.frontends.pyside.panels.feature_tree_panel import FeatureTreePanel
 from antcam_rc2.frontends.pyside.panels.project_panel import ProjectPanel
 from antcam_rc2.frontends.pyside.panels.simulation_panel import SimulationPanel
 from antcam_rc2.frontends.pyside.panels.toolpath_panel import ToolpathPanel
 from antcam_rc2.frontends.pyside.viewport.gl_viewport import GLViewport
+
+
+def _scene_extent_changed(
+    current: tuple[float, ...], previous: tuple[float, ...] | None, *, tolerance_ratio: float = 0.01
+) -> bool:
+    """True when ``current`` scene bounds differ from ``previous`` appreciably.
+
+    A small tolerance (a fraction of the largest span) absorbs decorations that
+    barely move the bounding box — most notably the feature-selection edge
+    outlines, which are nudged off the surface along the face normal.  Without
+    it, selecting a feature would look like a scene change and reset the
+    camera.
+    """
+    if previous is None:
+        return True
+    span = max(current[3] - current[0], current[4] - current[1], current[5] - current[2], 1e-6)
+    tolerance = span * tolerance_ratio
+    return not all(abs(a - b) <= tolerance for a, b in zip(current, previous, strict=True))
 
 
 class MainWindow(QMainWindow):
@@ -34,24 +50,24 @@ class MainWindow(QMainWindow):
         super().__init__(parent)
         self._controller = controller
         self._project_path: Path | None = None
+        self._last_fit_box: tuple[float, ...] | None = None
         self.setWindowTitle("AntCAM RC2")
         self.resize(1280, 860)
 
         self._viewport = GLViewport(self)
         self._project_panel = ProjectPanel(controller, self)
-        self._geometries_panel = GeometriesPanel(controller, self)
-        self._operations_panel = OperationsPanel(controller, self)
-        self._parameters_panel = ParametersPanel(controller, self)
+        self._feature_tree_panel = FeatureTreePanel(controller, self)
         self._toolpath_panel = ToolpathPanel(controller, self)
         self._simulation_panel = SimulationPanel(controller, self)
 
         tabs = QTabWidget(self)
         tabs.addTab(self._project_panel, "Project")
-        tabs.addTab(self._geometries_panel, "Geometries")
-        tabs.addTab(self._operations_panel, "Operations")
-        tabs.addTab(self._parameters_panel, "Parameters")
+        tabs.addTab(self._feature_tree_panel, "Features")
         tabs.addTab(self._toolpath_panel, "Toolpath")
         tabs.addTab(self._simulation_panel, "Simulation")
+        self._tabs = tabs
+        self._simulation_tab_index = tabs.indexOf(self._simulation_panel)
+        tabs.currentChanged.connect(self._on_tab_changed)
 
         splitter = QSplitter(Qt.Orientation.Horizontal, self)
         splitter.addWidget(self._viewport)
@@ -74,7 +90,6 @@ class MainWindow(QMainWindow):
         controller.operations_changed.connect(self._refresh_operations)
         controller.fixtures_changed.connect(self._project_panel.refresh)
         controller.stock_changed.connect(self._on_stock_changed)
-        controller.selection_changed.connect(self._on_selection_changed)
         controller.toolpath_changed.connect(self._on_toolpath_changed)
         controller.status_message.connect(self._status.setText)
         self._viewport.entity_picked.connect(self._on_entity_picked)
@@ -89,7 +104,7 @@ class MainWindow(QMainWindow):
         new_action.triggered.connect(self._on_new_project)
         open_action = QAction("&Open project...", self)
         open_action.setShortcut(QKeySequence.StandardKey.Open)
-        open_action.triggered.connect(lambda: self._controller.open_project(self._ask_open_path()))
+        open_action.triggered.connect(self._on_open)
         save_action = QAction("&Save project...", self)
         save_action.setShortcut(QKeySequence.StandardKey.Save)
         save_action.triggered.connect(self._on_save_project)
@@ -149,7 +164,7 @@ class MainWindow(QMainWindow):
         new_action = QAction("New", self)
         new_action.triggered.connect(self._on_new_project)
         open_action = QAction("Open", self)
-        open_action.triggered.connect(lambda: self._controller.open_project(self._ask_open_path()))
+        open_action.triggered.connect(self._on_open)
         generate_action = QAction("Plan", self)
         generate_action.triggered.connect(self._controller.generate_toolpath)
         fit_action = QAction("Fit", self)
@@ -209,29 +224,46 @@ class MainWindow(QMainWindow):
         if path:
             self._controller.import_solid(Path(path))
 
-    def _ask_open_path(self) -> Path:
-        path, _ = QFileDialog.getOpenFileName(self, "Open project", "", "AntCAM project (*.antcam.json)")
-        return Path(path)
-
     # ------------------------------------------------------------------ refresh
     def _refresh_all(self) -> None:
         self._project_panel.refresh()
-        self._geometries_panel.refresh()
+        self._feature_tree_panel.refresh()
         self._refresh_operations()
-        self._parameters_panel.refresh()
         self._toolpath_panel.refresh()
         self._simulation_panel.refresh()
 
     def _refresh_operations(self) -> None:
-        self._operations_panel.refresh()
-        self._parameters_panel.refresh()
+        self._feature_tree_panel.refresh()
+
+    def _on_tab_changed(self, index: int) -> None:
+        """Entering the Simulation tab shows the stock; leaving restores the view."""
+        if index == self._simulation_tab_index:
+            self._simulation_panel.enter()
+        else:
+            self._simulation_panel.leave()
 
     def _on_scene_changed(self) -> None:
         self._viewport.set_render_scene(self._controller.render_scene())
-        self._viewport.fit_view()
+        self._refit_if_scene_extent_changed()
 
-    def _on_selection_changed(self) -> None:
-        self._parameters_panel.refresh()
+    def _refit_if_scene_extent_changed(self) -> None:
+        """Frame the scene only when its extent changed appreciably.
+
+        Selection updates (feature highlight) redraw the render graph without
+        moving any geometry, so the camera's zoom/rotation/pan must be kept.
+        We refit only when the bounding box actually moved (new, imported or
+        removed content), with a 1% tolerance on the largest span so that tiny
+        decorations (e.g. an edge outline nudged off the surface) do not count
+        as a scene change.
+        """
+        box = self._viewport.scene_box
+        if box is None or box.is_empty:
+            return
+        current = box.to_tuple()
+        if not _scene_extent_changed(current, self._last_fit_box):
+            return
+        self._last_fit_box = current
+        self._viewport.fit_view()
 
     def _on_toolpath_changed(self) -> None:
         self._viewport.set_render_scene(self._controller.render_scene())

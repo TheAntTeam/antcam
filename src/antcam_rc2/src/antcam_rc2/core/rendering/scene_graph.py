@@ -167,6 +167,7 @@ class RenderMesh(_RenderModel):
     triangles: tuple[int, ...] = ()  # flat (i, j, k, ...) triplets
     color: RGBA = (0.7, 0.7, 0.72, 1.0)
     picking_id: int = Field(default=0, ge=0)
+    overlay: bool = False  # drawn unlit by the viewport highlight pipeline
 
     @model_validator(mode="after")
     def _validate_mesh(self) -> RenderMesh:
@@ -198,7 +199,12 @@ class RenderScene(_RenderModel):
     picking: tuple[PickEntry, ...] = ()
 
     def bounding_box(self) -> RenderBox:
-        """The overall axis-aligned bounding box of every node and mesh."""
+        """The overall axis-aligned bounding box of the scene geometry.
+
+        Overlay meshes (selection ribbons) are decorations drawn on top of the
+        solids, so they are excluded: they must not move the camera fit or look
+        like a scene change when a feature is selected.
+        """
         result = RenderBox.empty()
         for node in self.nodes:
             if node.box is not None:
@@ -217,6 +223,8 @@ class RenderScene(_RenderModel):
                     )
                 )
         for mesh in self.meshes:
+            if mesh.overlay:
+                continue
             for index in range(0, len(mesh.vertices), _POINT_STRIDE):
                 result = result.union(
                     RenderBox(
@@ -252,6 +260,7 @@ class RenderScene(_RenderModel):
                     "triangles": len(mesh.triangles),
                     "color": mesh.color,
                     "picking_id": mesh.picking_id,
+                    "overlay": mesh.overlay,
                 }
                 for mesh in self.meshes
             ],

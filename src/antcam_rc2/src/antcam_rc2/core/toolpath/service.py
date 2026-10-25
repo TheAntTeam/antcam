@@ -73,6 +73,12 @@ class ToolpathService:
         captures ``project`` (an immutable snapshot) and the transient scene on
         the main thread, and this method only reads them.  ``solid_scene`` is
         optional and enables operations that reference 3D features (Fase 9).
+
+        ``scene`` and ``solid_scene`` must be the scenes **as stored** (before
+        any placement).  References and the geometry binding are validated
+        against them, and the project's placements are applied afterwards, so
+        the plan comes out in the stock/WCS frame while references stay valid
+        when the part is repositioned.
         """
         index = build_scene_index(scene)
         binding_error = self._binding_error(project, index)
@@ -155,15 +161,24 @@ class ToolpathService:
         try:
             definition = self._registry.definition(operation.operation_type)
             params = definition.parameters_model.model_validate(operation.parameters.strategy_parameters)
-            entities = tuple(resolve_geometry_ref(reference, scene, index) for reference in operation.geometry_refs)
+            # Resolve every reference against the scene it was bound to (the
+            # unplaced one), then apply the project placements.  Doing it in
+            # this order is what makes references survive repositioning: the
+            # fingerprints cover absolute coordinates, so a placed scene would
+            # look "stale" even though nothing about the model changed.
+            geometry_entities = tuple(
+                resolve_geometry_ref(reference, scene, index) for reference in operation.geometry_refs
+            )
+            geometry_entities = self._place_geometry_entities(project, scene, geometry_entities)
             solid_features: tuple = ()
             if operation.solid_refs:
                 if solid_scene is None:
                     raise GeometryReferenceError("operation references 3D features but no solid scene was provided")
-                solid_features = tuple(resolve_solid_ref(reference, solid_scene) for reference in operation.solid_refs)
-                entities = entities + tuple(
-                    entity for feature in solid_features for entity in feature_to_entities(feature)
-                )
+                resolved = tuple(resolve_solid_ref(reference, solid_scene) for reference in operation.solid_refs)
+                solid_features = self._place_solid_features(project, solid_scene, resolved)
+            entities = geometry_entities + tuple(
+                entity for feature in solid_features for entity in feature_to_entities(feature)
+            )
             if not entities:
                 raise GeometryReferenceError("operation has no selected geometry")
             machine = self._catalogs.machine(project.machine_id)
@@ -212,6 +227,31 @@ class ToolpathService:
             )
         except (AntcamError, ValueError) as exc:
             return self._failed(operation, _diagnostic_code(exc), str(exc))
+
+    @staticmethod
+    def _place_geometry_entities(project: Project, scene: GeometryScene, entities: tuple):
+        """Apply the project's 2D placement to already-resolved entities."""
+        if project.geometry_placement is None or not entities:
+            return entities
+        from antcam_rc2.core.geometry.transform import apply  # noqa: WPS433
+        from antcam_rc2.core.project.geometry_placement import affine_for_placement  # noqa: WPS433
+
+        affine = affine_for_placement(project.geometry_placement, scene, project.stock, project.wcs)
+        return tuple(apply(affine, entity) for entity in entities)
+
+    @staticmethod
+    def _place_solid_features(project: Project, solid_scene: SolidScene, features: tuple):
+        """Apply the project's 3D placement to already-resolved features."""
+        if project.solid_placement is None or not features:
+            return features
+        from antcam_rc2.core.project.solid_placement import placement_to_affine_with_pivot  # noqa: WPS433
+
+        box = solid_scene.bounding_box()
+        pivot = None if box.is_empty else box.center
+        affine = placement_to_affine_with_pivot(project.solid_placement, pivot)
+        if affine.is_identity():
+            return features
+        return tuple(feature.apply(affine) for feature in features)
 
     @staticmethod
     def _check_tool_compatibility(definition, tool) -> None:

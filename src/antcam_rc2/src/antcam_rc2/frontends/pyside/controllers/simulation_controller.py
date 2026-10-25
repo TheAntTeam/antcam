@@ -51,12 +51,17 @@ class _SimulationRunnable(QRunnable):
 
     def run(self) -> None:
         def on_progress(
-            motion_index: int, position: Position3, removed_voxels: int, occupancy: np.ndarray | None
+            motion_index: int,
+            position: Position3,
+            removed_voxels: int,
+            occupancy: np.ndarray | None,
+            tool_id: str | None,
         ) -> None:
             removed_mm3 = removed_voxels * (self._settings.voxel_resolution_mm or 1.0) ** 3
-            downsampled = occupancy[::2, ::2, ::2] if occupancy is not None else None
+            # ``occupancy`` is already x2-downsampled by the simulator (copying
+            # the full mask here only to shrink it was wasted bandwidth).
             self._carrier.progress.emit(
-                (motion_index, (position.x_mm, position.y_mm, position.z_mm), removed_mm3, downsampled)
+                (motion_index, (position.x_mm, position.y_mm, position.z_mm), removed_mm3, occupancy, tool_id)
             )
 
         try:

@@ -32,7 +32,7 @@ from antcam_rc2.core.simulation.models import (
     SimulationTick,
 )
 from antcam_rc2.core.simulation.sweep import _subdivide, remove_motion
-from antcam_rc2.core.simulation.tool_geometry import ToolAssembly
+from antcam_rc2.core.simulation.tool_geometry import AssemblyBody, ToolAssembly
 from antcam_rc2.core.simulation.voxels import VoxelGrid
 from antcam_rc2.core.toolpath.models import (
     MotionCommand,
@@ -79,10 +79,10 @@ class Simulator:
         """Simulate the whole plan; returns report + scrubbing checkpoints.
 
         ``progress_callback(motion_index, tool_position, removed_voxels,
-        occupancy_or_None)`` is invoked in the caller thread every
-        ``progress_every`` motions (occupancy is a full mask copy every
-        ``mesh_every`` motions, for the UI to build display meshes).  It is
-        optional and does not affect the report.
+        occupancy_or_None, tool_id)`` is invoked in the caller thread every
+        ``progress_every`` motions (occupancy is an x2-downsampled mask copy
+        every ``mesh_every`` motions, ready for the UI to build a display
+        mesh).  It is optional and does not affect the report.
         """
         events: list[SimulationEvent] = []
         accumulator = _StatsAccumulator()
@@ -130,12 +130,14 @@ class Simulator:
 
         fixtures = _effective_fixtures(project)
         machine = self._catalogs.machine(project.machine_id)
+        stock_origin = stock_min_corner(project.stock, project.wcs)
         stock_top = stock_top_z(project.stock, project.wcs)
         margin = max(settings.collision_margin_mm, used_resolution)
 
         timeline: list[SimulationTick] = []
         checkpoints: list[VoxelCheckpoint] = []
         checkpoint_bytes = int(grid.occupied.nbytes)
+        last_event_count = 0
         tick = 0
         motion_index = 0
         current: Position3 | None = None
@@ -178,6 +180,10 @@ class Simulator:
             operation = next(candidate for candidate in project.operations if candidate.id == result.operation_id)
             tool = self._catalogs.tool(operation.tool_id)
             assembly = ToolAssembly(tool, machine)
+            # Built once per operation: rebuilding these per motion was a
+            # measurable cost in the hot loop.
+            cutter = assembly.cutter_body()
+            non_cutting = assembly.non_cutting_bodies()
             warning = assembly.unknown_geometry_warning()
             if warning is not None:
                 events.append(
@@ -193,6 +199,7 @@ class Simulator:
                 )
             accumulator.operations_simulated += 1
             outside_reported = False
+            reach_reported = False
 
             for motion in result.program.motions:
                 if current is None:
@@ -205,14 +212,17 @@ class Simulator:
                     accumulator.duration_estimate_s += motion.dwell_seconds or 0.0
                 else:
                     if _is_cut(motion):
-                        removed = remove_motion(grid, current, motion, assembly.cutter_body(), used_resolution)
+                        removed = remove_motion(grid, current, motion, cutter, used_resolution)
                         accumulator.removed_voxels += removed
                         total_removed_mm3 = grid.removed_voxels * (used_resolution**3)
                         depth = stock_top - motion.endpoint.z_mm
                         if depth > accumulator.max_depth_reached_mm:
                             accumulator.max_depth_reached_mm = depth
                         hit = check_reach(depth, assembly, margin)
-                        if hit is not None:
+                        if hit is not None and not reach_reported:
+                            # One warning per operation: repeating "reach exceeded"
+                            # on every motion flooded the report and the timeline.
+                            reach_reported = True
                             events.append(
                                 self._event(
                                     tick,
@@ -226,14 +236,37 @@ class Simulator:
                             )
                             collision_count += 1
                         accumulator.duration_estimate_s += _motion_duration(current, motion)
-                        collision_count += _append_checks(
-                            events, grid, assembly, fixtures, motion.endpoint, margin, tick, motion_index, operation.id, project.stock, project.wcs
-                        )
-                    else:
+                        if settings.check_collisions:
+                            collision_count += _append_checks(
+                                events,
+                                grid,
+                                non_cutting,
+                                fixtures,
+                                motion.endpoint,
+                                margin,
+                                tick,
+                                motion_index,
+                                operation.id,
+                                project.stock,
+                                project.wcs,
+                                stock_origin,
+                            )
+                    elif settings.check_collisions:
                         # Rapids never remove material; sample the path for collisions.
                         for sample in _subdivide(current, motion, used_resolution)[1:]:
                             collision_count += _append_checks(
-                                events, grid, assembly, fixtures, sample, margin, tick, motion_index, operation.id, project.stock, project.wcs
+                                events,
+                                grid,
+                                non_cutting,
+                                fixtures,
+                                sample,
+                                margin,
+                                tick,
+                                motion_index,
+                                operation.id,
+                                project.stock,
+                                project.wcs,
+                                stock_origin,
                             )
                     work_area_hit = check_tip_in_work_area(motion.endpoint, machine, margin)
                     if work_area_hit is not None and not outside_reported:
@@ -256,9 +289,19 @@ class Simulator:
                         motion_index,
                         current,
                         grid.removed_voxels,
-                        grid.occupied.copy() if motion_index % mesh_every == 0 else None,
+                        grid.occupied[::2, ::2, ::2].copy() if motion_index % mesh_every == 0 else None,
+                        operation.tool_id,
                     )
                 if tick % stride == 0 or motion_index == total_motions - 1:
+                    # Only scan the events added since the previous tick: the old
+                    # ``enumerate(events)`` per tick was O(ticks x events) and
+                    # dominated the whole simulation.
+                    new_event_indices = tuple(
+                        last_event_count + offset
+                        for offset, event in enumerate(events[last_event_count:])
+                        if event.tick == tick
+                    )
+                    last_event_count = len(events)
                     timeline.append(
                         SimulationTick(
                             index=tick,
@@ -267,7 +310,7 @@ class Simulator:
                             removed_voxels=grid.removed_voxels,
                             total_removed_mm3=total_removed_mm3,
                             collision_count=collision_count,
-                            event_indices=tuple(index for index, event in enumerate(events) if event.tick == tick),
+                            event_indices=new_event_indices,
                         )
                     )
                 if tick % settings.checkpoint_every == 0:
@@ -414,7 +457,7 @@ def _effective_fixtures(project: Project) -> tuple[Fixture, ...]:
 def _append_checks(
     events: list[SimulationEvent],
     grid: VoxelGrid,
-    assembly: ToolAssembly,
+    non_cutting: tuple[AssemblyBody, ...],
     fixtures: tuple[Fixture, ...],
     tip: Position3,
     margin: float,
@@ -423,10 +466,13 @@ def _append_checks(
     operation_id: str,
     project_stock: Stock,
     project_wcs: WorkCoordinateSystem,
+    stock_origin: tuple[float, float, float],
 ) -> int:
     """Append collision events for one tool position; returns how many."""
     count = 0
-    for hit in check_collisions(grid, assembly, tip, fixtures, margin, project_stock, project_wcs):
+    for hit in check_collisions(
+        grid, non_cutting, tip, fixtures, margin, project_stock, project_wcs, stock_origin=stock_origin
+    ):
         severity = (
             SimulationSeverity.CRITICAL
             if hit.code in {SimulationCode.COLLISION_FIXTURE, SimulationCode.COLLISION_STOCK_MATERIAL}

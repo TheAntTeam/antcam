@@ -37,7 +37,8 @@ ORIGIN_COLOR: RGBA = (0.91, 0.29, 0.29, 1.0)
 GRID_COLOR: RGBA = (0.18, 0.19, 0.22, 1.0)
 SELECTION_COLOR: RGBA = (0.30, 0.64, 1.0, 1.0)
 RAPID_COLOR: RGBA = (0.62, 0.64, 0.68, 1.0)
-SIMULATED_MATERIAL_COLOR: RGBA = (0.86, 0.62, 0.22, 1.0)  # machined material surface
+SIMULATED_MATERIAL_COLOR: RGBA = (1.0, 0.47, 0.02, 1.0)  # machined material surface (stays orange after ACES)
+TOOL_MARKER_COLOR: RGBA = (0.80, 0.82, 0.86, 1.0)  # steel tool body
 
 # Toolpath color per operation family (milling amber, drilling cyan, carving green)
 _TOOLPATH_COLORS: dict[OperationType, RGBA] = {
@@ -228,6 +229,7 @@ __all__ = [
     "RAPID_COLOR",
     "SELECTION_COLOR",
     "SIMULATED_MATERIAL_COLOR",
+    "TOOL_MARKER_COLOR",
     "STOCK_COLOR",
     "STOCK_COLOR_METAL",
     "STOCK_COLOR_WOOD",

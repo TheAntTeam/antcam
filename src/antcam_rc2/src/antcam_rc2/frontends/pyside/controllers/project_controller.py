@@ -14,6 +14,7 @@ from PySide6.QtCore import QObject, Signal
 
 from antcam_rc2.app.application import Application
 from antcam_rc2.core.databases.models import MachineProfile
+from antcam_rc2.core.errors import ProjectError
 from antcam_rc2.core.geometry3d.scene import SolidScene
 from antcam_rc2.core.identifiers import new_id
 from antcam_rc2.core.io.scene import GeometryScene
@@ -75,6 +76,7 @@ class ProjectController(QObject):
         self._solid_graph = RenderScene()
         self._selected_operation_id: str | None = None
         self._selected_solid_features: set[tuple[int, int]] = set()
+        self._tool_mesh_cache: dict[str, tuple] = {}
         self._last_plan: ToolpathPlan | None = None
         self._last_artifact: ToolpathArtifact | None = None
 
@@ -169,7 +171,14 @@ class ProjectController(QObject):
         self.status_message.emit(f"Project '{name}' created")
 
     def open_project(self, path: Path) -> None:
-        project = self._app.project_service.import_project(path)
+        if not path.is_file():
+            self.status_message.emit(f"Cannot open project: {path} is not a file")
+            return
+        try:
+            project = self._app.project_service.import_project(path)
+        except ProjectError as exc:
+            self.status_message.emit(f"Failed to open project: {exc}")
+            return
         self._set_project(project)
         self.status_message.emit(f"Project '{project.name}' loaded — re-import its geometry to visualize")
 
@@ -268,9 +277,7 @@ class ProjectController(QObject):
             final_placement = dlg.result_placement()
             if is_import:
                 assert self._geometry_dialog_prev_project is not None
-                self._app.project_service.attach_geometry(
-                    self._geometry_dialog_prev_project.id, scene, final_placement
-                )
+                self._app.project_service.attach_geometry(self._geometry_dialog_prev_project.id, scene, final_placement)
                 self._project = self._app.project_service.get_project(self._geometry_dialog_prev_project.id)
                 self._scene = scene
             else:
@@ -330,9 +337,7 @@ class ProjectController(QObject):
         placement = self._project.solid_placement
         self._open_solid_placement_dialog(self._solid_scene, placement=placement, is_import=False)
 
-    def _open_solid_placement_dialog(
-        self, scene: SolidScene, *, placement: object | None, is_import: bool
-    ) -> None:
+    def _open_solid_placement_dialog(self, scene: SolidScene, *, placement: object | None, is_import: bool) -> None:
         from antcam_rc2.core.project.models import SolidPlacement as _SP
         from antcam_rc2.core.project.solid_placement import apply_placement
         from antcam_rc2.frontends.pyside.dialogs.import_solid_dialog import ImportSolidDialog
@@ -500,10 +505,15 @@ class ProjectController(QObject):
         """Push current highlight set as solid_refs on the active operation."""
         if self._project is None or self._solid_scene is None or self._selected_operation_id is None:
             return
-        refs = tuple(
-            create_solid_ref(self._solid_scene, bi, fi) for bi, fi in sorted(self._selected_solid_features)
-        )
+        refs = tuple(create_solid_ref(self._solid_scene, bi, fi) for bi, fi in sorted(self._selected_solid_features))
         self._app.project_service.replace_solid_refs(self._project.id, self._selected_operation_id, refs)
+
+    def replace_solid_refs_for_operation(self, operation_id: str, features: list[tuple[int, int]]) -> None:
+        """Replace solid refs for a specific operation with the given features."""
+        if self._project is None or self._solid_scene is None:
+            return
+        refs = tuple(create_solid_ref(self._solid_scene, bi, fi) for bi, fi in features)
+        self._app.project_service.replace_solid_refs(self._project.id, operation_id, refs)
 
     def select_solid_feature(self, body_index: int, feature_index: int) -> None:
         """Toggle one picked 3D feature (viewport picking)."""
@@ -518,7 +528,7 @@ class ProjectController(QObject):
         self.toggle_solid_feature(body_index, feature_index)
         feature = self._solid_scene.bodies[body_index].features[feature_index]
         action = "Added" if (body_index, feature_index) in self._selected_solid_features else "Removed"
-        self.status_message.emit(f"{action} 3D {feature.kind.value} {'to' if action=='Added' else 'from'} operation")
+        self.status_message.emit(f"{action} 3D {feature.kind.value} {'to' if action == 'Added' else 'from'} operation")
 
     def remove_solid_completely(self) -> None:
         """Remove attached solid, all its refs and toolpaths (single source of truth)."""
@@ -619,7 +629,9 @@ class ProjectController(QObject):
         # Import FixtureDialog here to avoid circular import
         from antcam_rc2.frontends.pyside.dialogs.fixture_dialog import FixtureDialog
 
-        dialog = FixtureDialog(self._viewport, fixture=fixture, mesh_source=path, stock=self._project.stock, wcs=self._project.wcs)
+        dialog = FixtureDialog(
+            self._viewport, fixture=fixture, mesh_source=path, stock=self._project.stock, wcs=self._project.wcs
+        )
         if dialog.exec():
             created = dialog.result_fixture()
             self.add_fixture(created)
@@ -723,10 +735,6 @@ class ProjectController(QObject):
             self.status_message.emit("Import geometry before generating a toolpath")
             return
         scene = self._scene
-        if scene is not None and project.geometry_placement is not None:
-            from antcam_rc2.core.project.geometry_placement import apply_placement as _apply_geo
-
-            scene = _apply_geo(scene, project.geometry_placement, project.stock, project.wcs)
         if scene is None:
             from antcam_rc2.core.io.diagnostics import ImportDiagnostics
             from antcam_rc2.core.io.scene import GeometryScene, SourceInfo
@@ -738,12 +746,10 @@ class ProjectController(QObject):
                 diagnostics=ImportDiagnostics(),
                 tolerance_mm=1e-6,
             )
-        placed_solid = None
-        if self._solid_scene is not None:
-            from antcam_rc2.core.project.solid_placement import apply_placement
-
-            placed_solid = apply_placement(self._solid_scene, project.solid_placement)
-        self.toolpath_controller.generate(project.id, scene, solid_scene=placed_solid)
+        # Pass the scenes exactly as stored (unplaced): the toolpath service
+        # validates refs against them and applies the project placements, so
+        # repositioning the part never stales a reference or the binding.
+        self.toolpath_controller.generate(project.id, scene, solid_scene=self._solid_scene)
 
     def bind_viewport(self, viewport: GLViewport) -> None:
         """Bind the viewport used for simulation visuals (called by MainWindow)."""
@@ -755,21 +761,54 @@ class ProjectController(QObject):
         voxel_size: float,
         marker_position: tuple[float, float, float] | None,
         _tick: int,
-    ) -> None:
-        """Push the simulated material mesh and tool marker to the viewport."""
+        tool_id: str | None = None,
+    ) -> int:
+        """Push the simulated material mesh and tool marker to the viewport.
+
+        Returns the number of triangles of the display mesh (0 when there is
+        nothing to show), so the caller can surface it to the user.
+        """
         if self._viewport is None:
-            return
+            return 0
         if mask is None:
-            self._viewport.set_tool_marker(marker_position)
-            return
+            self._viewport.set_tool_marker(marker_position, self._tool_marker_mesh(tool_id))
+            return 0
         if self._project is None:
-            return
+            return 0
         stock = self._project.stock
         origin = stock_min_corner(stock, self._project.wcs)
         grid = VoxelGrid(origin=origin, voxel_size=voxel_size, shape=mask.shape, occupied=mask)
-        vertices, triangles = grid.surface_mesh()
+        # Adaptive (greedy) boundary mesh: coplanar voxel faces merge into a few
+        # large quads, so flat areas are clean and the mesh is tiny (200x200x10
+        # with a pocket goes from ~180k triangles to a few dozen).
+        from antcam_rc2.core.simulation.surface import greedy_surface_mesh
+
+        vertices, triangles = greedy_surface_mesh(grid.occupied, grid.origin, grid.voxel_size)
+        if len(triangles) == 0:
+            return 0
         self._viewport.set_voxel_mesh(vertices, triangles, theme.SIMULATED_MATERIAL_COLOR)
-        self._viewport.set_tool_marker(marker_position)
+        # Only hide the translucent stock once there is material to show, so a
+        # failed voxel upload can never leave the viewport blank.
+        self._viewport.set_simulation_active(True)
+        self._viewport.set_tool_marker(marker_position, self._tool_marker_mesh(tool_id))
+        return int(len(triangles))
+
+    def _tool_marker_mesh(self, tool_id: str | None) -> tuple | None:
+        """A tool-shaped marker mesh (cutter + shank) for ``tool_id``, cached."""
+        if tool_id is None or self._machine is None:
+            return None
+        cached = self._tool_mesh_cache.get(tool_id)
+        if cached is not None:
+            return cached
+        from antcam_rc2.core.simulation.tool_geometry import ToolAssembly, assembly_marker_mesh
+
+        try:
+            tool = self._app.catalog_repository.tool(tool_id)
+        except Exception:  # noqa: BLE001 - unknown tool -> fall back to the box
+            return None
+        mesh = assembly_marker_mesh(ToolAssembly(tool, self._machine))
+        self._tool_mesh_cache[tool_id] = mesh
+        return mesh
 
     def clear_simulation(self) -> None:
         """Remove the simulated material mesh and tool marker from the viewport."""
@@ -778,6 +817,7 @@ class ProjectController(QObject):
 
             self._viewport.set_voxel_mesh(np.empty((0, 3)), np.empty((0, 3), dtype=np.int64), (1, 1, 1, 1))
             self._viewport.set_tool_marker(None)
+            self._viewport.set_simulation_active(False)
 
     # ------------------------------------------------------------------ internals
     def _set_project(self, project: Project) -> None:
@@ -872,7 +912,10 @@ class ProjectController(QObject):
     def _on_plan_ready(self, plan: ToolpathPlan) -> None:
         self._last_plan = plan
         self._last_artifact = None
-        if self._project is not None and self._scene is not None:
+        # Render the toolpath whenever there is a project: 3D-only projects
+        # (STEP features, no 2D scene) must show their toolpath too.  The old
+        # ``self._scene is not None`` guard silently dropped it in that case.
+        if self._project is not None:
             self._toolpath_graph = toolpath_to_scene(plan, color_for_operation=theme.toolpath_color)
             self.toolpath_changed.emit()
         executable = plan.is_executable

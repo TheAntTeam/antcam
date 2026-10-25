@@ -5,8 +5,20 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from antcam_rc2.core.rendering.scene_graph import NodeKind, RenderBox, RenderNode, RenderScene, flat_points
-from antcam_rc2.frontends.pyside.viewport.buffers import decode_picking_id, line_vertices, solid_vertices
+from antcam_rc2.core.rendering.scene_graph import (
+    NodeKind,
+    RenderBox,
+    RenderMesh,
+    RenderNode,
+    RenderScene,
+    flat_points,
+)
+from antcam_rc2.frontends.pyside.viewport.buffers import (
+    decode_picking_id,
+    line_vertices,
+    overlay_vertices,
+    solid_vertices,
+)
 from antcam_rc2.frontends.pyside.viewport.shaders import shader_sources
 
 
@@ -31,6 +43,46 @@ def test_line_vertices_expand_strips_to_pairs() -> None:
     np.testing.assert_allclose(buffer[0, 0:3], (0.0, 0.0, 0.0))
     np.testing.assert_allclose(buffer[3, 0:3], (1.0, 1.0, 0.0))
     assert (buffer[:, 3:7] == (1.0, 0.0, 0.0, 1.0)).all()
+
+
+def test_line_vertices_can_split_toolpath_from_other_lines() -> None:
+    scene = RenderScene(
+        nodes=(
+            RenderNode(
+                kind=NodeKind.LINE_STRIP,
+                points=flat_points([(0.0, 0.0, 0.0), (1.0, 0.0, 0.0)]),
+                color=(1.0, 0.0, 0.0, 1.0),
+            ),
+            RenderNode(
+                kind=NodeKind.TOOLPATH_STRIP,
+                points=flat_points([(0.0, 0.0, 1.0), (1.0, 0.0, 1.0), (2.0, 0.0, 1.0)]),
+                color=(0.0, 1.0, 0.0, 1.0),
+            ),
+        )
+    )
+    everything = line_vertices(scene)
+    only_toolpath = line_vertices(scene, toolpath=True)
+    without_toolpath = line_vertices(scene, toolpath=False)
+    # 1 segment + 2 segments = 3 segments -> 6 vertices total.
+    assert everything.shape[0] == 6
+    assert only_toolpath.shape[0] == 4
+    assert without_toolpath.shape[0] == 2
+    assert (only_toolpath[:, 3:7] == (0.0, 1.0, 0.0, 1.0)).all()
+    assert (without_toolpath[:, 3:7] == (1.0, 0.0, 0.0, 1.0)).all()
+
+
+def test_overlay_vertices_exports_only_unlit_highlight_meshes() -> None:
+    shared = (0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0)
+    scene = RenderScene(
+        meshes=(
+            RenderMesh(vertices=shared, triangles=(0, 1, 2), color=(0.7, 0.7, 0.72, 1.0)),
+            RenderMesh(vertices=shared, triangles=(0, 1, 2), color=(1.0, 0.5, 0.0, 1.0), overlay=True),
+        )
+    )
+    buffer = overlay_vertices(scene)
+    # Only the overlay mesh is exported, expanded to 3 vertices with stride 7.
+    assert buffer.shape == (3, 7)
+    assert (buffer[:, 3:7] == (1.0, 0.5, 0.0, 1.0)).all()
 
 
 def test_closed_polyline_closes_the_loop() -> None:

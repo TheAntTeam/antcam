@@ -9,7 +9,7 @@ from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from antcam_rc2.core.geometry3d.picking import ray_mesh_hit
 from antcam_rc2.core.geometry3d.scene import SolidScene
 from antcam_rc2.core.project.models import Stock
-from antcam_rc2.core.rendering.scene_graph import RenderScene
+from antcam_rc2.core.rendering.scene_graph import RenderBox, RenderScene
 from antcam_rc2.frontends.pyside.viewport.camera import OrbitCamera
 from antcam_rc2.frontends.pyside.viewport.gl_log import gl_log
 from antcam_rc2.frontends.pyside.viewport.lights import Lights
@@ -36,6 +36,10 @@ class GLViewport(QOpenGLWidget):
         self._picking_enabled = False
         self._solid_picking_enabled = False
         self._solid_scene: SolidScene | None = None
+        self._voxel_mesh = None
+        self._tool_marker = None
+        self._voxel_dirty = False
+        self._marker_dirty = False
         self._last_mouse = None
         self._dragging = False
 
@@ -57,17 +61,39 @@ class GLViewport(QOpenGLWidget):
             self._renderer.set_scene(scene, self._scene_box)
         self.update()
 
-    def set_voxel_mesh(self, vertices, triangles, color) -> None:
-        """Show the simulated material surface (or pass empty arrays to clear)."""
-        if self._renderer_ready:
-            self._renderer.set_voxel_mesh(vertices, triangles, color)
-            self.update()
+    @property
+    def scene_box(self) -> RenderBox | None:
+        """Bounding box of the current render scene (``None`` when empty)."""
+        return self._scene_box
 
-    def set_tool_marker(self, position: tuple[float, float, float] | None) -> None:
-        """Show/hide the tool position marker during simulation."""
-        if self._renderer_ready:
-            self._renderer.set_tool_marker(position)
-            self.update()
+    def set_voxel_mesh(self, vertices, triangles, color) -> None:
+        """Show the simulated material surface (or pass empty arrays to clear).
+
+        The upload is deferred to ``paintGL``: this is called from UI slots
+        (tab change, progress signals) where the widget's GL context is NOT
+        current, so uploading here silently failed and nothing rendered.
+        """
+        self._voxel_mesh = (vertices, triangles, color)
+        self._voxel_dirty = True
+        self.update()
+
+    def set_simulation_active(self, active: bool) -> None:
+        """Switch the viewport to the simulation look.
+
+        When active the opaque voxel surface takes the place of the stock, so
+        the translucent stock box is hidden and the carving is visible.
+        """
+        self._renderer.set_stock_visible(not active)
+        self.update()
+
+    def set_tool_marker(self, position: tuple[float, float, float] | None, mesh=None) -> None:
+        """Show/hide the tool marker during simulation (deferred upload).
+
+        ``mesh`` is an optional tool-shaped mesh (built from the selected tool).
+        """
+        self._tool_marker = (position, mesh)
+        self._marker_dirty = True
+        self.update()
 
     def set_picking_enabled(self, enabled: bool) -> None:
         """Enable click-to-pick mode (geometry selection)."""
@@ -139,6 +165,7 @@ class GLViewport(QOpenGLWidget):
             self._renderer_ready = True
             if self._scene.nodes:
                 self._renderer.set_scene(self._scene, self._scene_box)
+            self._flush_pending_uploads()
         except Exception as exc:  # noqa: BLE001 - never let a GL failure kill the app
             gl_log("initializeGL FAILED:", type(exc).__name__, str(exc)[:400])
             self._gl_failed = True
@@ -151,10 +178,22 @@ class GLViewport(QOpenGLWidget):
                 gl_log("resizeGL FAILED:", type(exc).__name__, str(exc)[:300])
                 self._gl_failed = True
 
+    def _flush_pending_uploads(self) -> None:
+        """Upload deferred voxel/marker data with the GL context current."""
+        if self._voxel_dirty and self._voxel_mesh is not None:
+            vertices, triangles, color = self._voxel_mesh
+            self._renderer.set_voxel_mesh(vertices, triangles, color)
+            self._voxel_dirty = False
+        if self._marker_dirty:
+            position, mesh = self._tool_marker if self._tool_marker is not None else (None, None)
+            self._renderer.set_tool_marker(position, mesh=mesh)
+            self._marker_dirty = False
+
     def paintGL(self) -> None:
         gl_log("paintGL called")
         if self._renderer_ready and not self._gl_failed:
             try:
+                self._flush_pending_uploads()
                 self._renderer.paint(self._camera, self._lights, self._scene_box)
             except Exception as exc:  # noqa: BLE001
                 gl_log("paintGL FAILED:", type(exc).__name__, str(exc)[:300])

@@ -83,6 +83,52 @@ def test_simulate_drill_too_deep_flags_reach_exceeded(application: Application) 
     assert report.stats.max_depth_reached_mm == pytest.approx(8.0)
 
 
+def test_progress_callback_yields_downsampled_masks(application: Application) -> None:
+    project, plan = _scaffold(application)
+    shapes: list[tuple[int, ...]] = []
+    Simulator(application.catalog_repository).simulate(
+        project,
+        plan,
+        SimulationSettings(voxel_resolution_mm=1.0),
+        progress_callback=lambda _i, _pos, _removed, occ, _tool: shapes.append(occ.shape) if occ is not None else None,
+        progress_every=1,
+        mesh_every=1,
+    )
+    assert shapes
+    # Stock 30x30x10 at 1 mm -> grid (30, 30, 10); masks are x2-downsampled
+    # before being copied, so the UI never receives the full array.
+    assert shapes[0] == (15, 15, 5)
+
+
+def test_reach_exceeded_is_reported_once_per_operation(application: Application) -> None:
+    scene = import_file(DATA / "mini_polyline_bulge.dxf")
+    project = application.project_service.create_project(
+        "deep profile",
+        machine_id="makera_z1",
+        stock=Stock(width_mm=30.0, length_mm=30.0, height_mm=30.0, material_id="aluminum_6061"),
+    )
+    application.project_service.attach_geometry(project.id, scene)
+    # 20 mm deep with a 12 mm flute: every cut motion exceeds the reach, but the
+    # simulator must report it once per operation, not once per motion.
+    application.project_service.add_operation(
+        project.id,
+        OperationType.PROFILING,
+        tool_id="end_mill_3_175_2f",
+        cooling_id="aerodust",
+        geometry_refs=(create_geometry_ref(scene, "0", 0),),
+        operation_parameters=OperationParameters(depth_mm=20.0, stepdown_mm=5.0),
+    )
+    project = application.project_service.get_project(project.id)
+    plan = application.toolpath_service.plan_snapshot(project, scene, PlanningSettings(clearance_z_mm=5.0))
+    report = (
+        Simulator(application.catalog_repository)
+        .simulate(project, plan, SimulationSettings(voxel_resolution_mm=1.0))
+        .report
+    )
+    reach = [event for event in report.events if event.code is SimulationCode.REACH_EXCEEDED]
+    assert len(reach) == 1
+
+
 def test_simulate_rejects_non_executable_plan(application: Application) -> None:
     scene = import_file(DATA / "mini_polyline_bulge.dxf")
     project = application.project_service.create_project(

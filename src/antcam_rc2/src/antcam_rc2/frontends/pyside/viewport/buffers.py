@@ -16,6 +16,7 @@ from antcam_rc2.core.rendering.scene_graph import NodeKind, RenderNode, RenderSc
 _LINE_STRIDE = 8  # x y z  r g b a
 _SOLID_STRIDE = 10  # x y z  nx ny nz  r g b a
 _PICK_STRIDE = 7  # x y z  id_r id_g id_b id_a
+_OVERLAY_STRIDE = 7  # x y z  r g b a  (unlit highlight triangles)
 
 # Digit segments for 0-9 using a simple 5x7 grid (each digit is 5 wide x 7 high)
 # Each segment is ((x1, y1), (x2, y2)) in local digit coordinates (0..5, 0..7)
@@ -136,19 +137,37 @@ def _number_to_digit_vertices(
     return np.concatenate([v for v in all_vertices if v.size > 0], axis=0)
 
 
-def line_vertices(scene: RenderScene, *, picking: bool = False) -> np.ndarray:
+def line_vertices(
+    scene: RenderScene,
+    *,
+    picking: bool = False,
+    toolpath: bool | None = None,
+    color_override: tuple | None = None,
+) -> np.ndarray:
     """Build one interleaved line array for every line-like node.
 
     Line strips are expanded to ``GL_LINES`` pairs.  In ``picking`` mode the
     color channel carries the picking id encoded as RGBA bytes.
+
+    ``toolpath`` filters by node role: ``None`` keeps every line node (used by
+    the picking pass), ``True`` keeps only toolpath strips and ``False``
+    excludes them.  Toolpaths are drawn in their own pass so they can be shown
+    on top of the opaque part (their cuts run *inside* the material).
     """
     rows: list[np.ndarray] = []
     stride = _PICK_STRIDE if picking else _LINE_STRIDE
     for node in scene.nodes:
+        if toolpath is not None and (node.kind is NodeKind.TOOLPATH_STRIP) != toolpath:
+            continue
         segments = _line_segments(node)
         if segments.shape[0] == 0:
             continue
-        color = _pick_rgba(node.picking_id) if picking else node.color
+        if picking:
+            color = _pick_rgba(node.picking_id)
+        elif color_override is not None:
+            color = color_override
+        else:
+            color = node.color
         vertex_count = len(segments) * 2
         buffer = np.empty((vertex_count, stride), dtype=np.float32)
         buffer[:, 0:3] = segments.reshape(-1, 3)
@@ -489,6 +508,28 @@ def mesh_vertices(vertices: np.ndarray, triangles: np.ndarray, color: tuple) -> 
     buffer[:, 3:6] = np.repeat(normals, 3, axis=0)
     buffer[:, 6:10] = np.asarray(color, dtype=np.float32)
     return buffer
+
+
+def overlay_vertices(scene: RenderScene) -> np.ndarray:
+    """Flatten overlay meshes into unlit ``(position, color)`` triangles.
+
+    Overlay meshes carry the selection highlight (thick feature edges) and are
+    drawn with the flat line shader, so they stay bright regardless of the
+    scene lighting and read as a distinct accent over the shaded solid.
+    """
+    blocks: list[np.ndarray] = []
+    for mesh in scene.meshes:
+        if not mesh.overlay or not mesh.triangles:
+            continue
+        vertices = np.asarray(mesh.vertices, dtype=np.float64).reshape(-1, 3)
+        triangles = np.asarray(mesh.triangles, dtype=np.int64).reshape(-1, 3)
+        block = np.empty((len(triangles) * 3, _OVERLAY_STRIDE), dtype=np.float32)
+        block[:, 0:3] = vertices[triangles].reshape(-1, 3)
+        block[:, 3:7] = np.asarray(mesh.color, dtype=np.float32)
+        blocks.append(block)
+    if not blocks:
+        return np.empty((0, _OVERLAY_STRIDE), dtype=np.float32)
+    return np.concatenate(blocks, axis=0)
 
 
 def unit_box_mesh(size_mm: float, color: tuple) -> tuple[np.ndarray, np.ndarray]:

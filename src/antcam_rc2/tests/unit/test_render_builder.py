@@ -2,15 +2,30 @@
 
 from __future__ import annotations
 
+import numpy as np
+import pytest
+
 from antcam_rc2.core.geometry.curves import Circle, LineSegment
 from antcam_rc2.core.geometry.paths import Contour
 from antcam_rc2.core.geometry.primitives import Point2
+from antcam_rc2.core.geometry3d.mesh import TriMesh
+from antcam_rc2.core.geometry3d.scene import (
+    Feature3D,
+    FeatureKind,
+    SolidBody,
+    SolidScene,
+    SolidSourceInfo,
+)
 from antcam_rc2.core.io.scene import GeometryScene, SourceInfo
 from antcam_rc2.core.project.models import Fixture, OperationType, Project, Stock
 from antcam_rc2.core.rendering.builder import (
+    _SOLID_COLOR,
+    _SOLID_SELECTION_COLOR,
+    _SOLID_SELECTION_FILL,
     default_layer_color,
     geometry_to_scene,
     setup_to_scene,
+    solid_to_scene,
     toolpath_to_scene,
 )
 from antcam_rc2.core.rendering.scene_graph import NodeKind
@@ -205,3 +220,72 @@ def test_render_builders_are_deterministic() -> None:
     first = geometry_to_scene(scene)
     second = geometry_to_scene(scene)
     assert first.fingerprint() == second.fingerprint()
+
+
+def make_solid_scene(kind: FeatureKind = FeatureKind.FACE_PLANAR) -> SolidScene:
+    """A single quad body with one feature covering its first triangle."""
+    vertices = np.array([[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [10.0, 10.0, 0.0], [0.0, 10.0, 0.0]])
+    faces = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.int64)
+    hole = {"center": (5.0, 5.0), "radius": 1.5} if kind is FeatureKind.HOLE else {}
+    feature = Feature3D(
+        kind=kind,
+        body_index=0,
+        feature_index=0,
+        boundary=((0.0, 0.0, 0.0), (10.0, 0.0, 0.0), (10.0, 10.0, 0.0), (0.0, 10.0, 0.0)),
+        triangles=(0,),
+        **hole,
+    )
+    body = SolidBody(id="body_0", name="plate", mesh=TriMesh(vertices=vertices, faces=faces), features=(feature,))
+    return SolidScene(source=SolidSourceInfo(format="stl"), bodies=(body,))
+
+
+def test_solid_to_scene_without_selection_emits_one_mesh() -> None:
+    graph = solid_to_scene(make_solid_scene())
+    assert len(graph.meshes) == 1
+    assert graph.meshes[0].color == _SOLID_COLOR
+    assert graph.nodes == ()
+
+
+def test_solid_to_scene_face_planar_selection_fills_and_outlines() -> None:
+    graph = solid_to_scene(make_solid_scene(FeatureKind.FACE_PLANAR), selected={(0, 0)})
+    # base + accent face fill + thick edge ribbon
+    assert len(graph.meshes) == 3
+    highlight = next(mesh for mesh in graph.meshes if mesh.color == _SOLID_SELECTION_FILL)
+    assert len(highlight.triangles) == 3
+    base = next(mesh for mesh in graph.meshes if mesh.color == _SOLID_COLOR)
+    assert len(base.triangles) == 3
+    assert any(mesh.overlay for mesh in graph.meshes)
+
+
+@pytest.mark.parametrize("kind", [FeatureKind.PERIMETER, FeatureKind.HOLE])
+def test_solid_to_scene_contour_selection_only_outlines_edges(kind: FeatureKind) -> None:
+    # A perimeter/hole is an edge contour, not a surface: the face is untouched
+    # and only the thick overlay ribbon is added.
+    graph = solid_to_scene(make_solid_scene(kind), selected={(0, 0)})
+    assert len(graph.meshes) == 2
+    base = next(mesh for mesh in graph.meshes if not mesh.overlay)
+    assert base.color == _SOLID_COLOR
+    ribbon = next(mesh for mesh in graph.meshes if mesh.overlay)
+    assert ribbon.color == _SOLID_SELECTION_COLOR
+    assert not any(mesh.color == _SOLID_SELECTION_FILL for mesh in graph.meshes)
+
+
+def test_solid_to_scene_outline_is_offset_off_the_surface() -> None:
+    # Coplanar outline edges would be hidden by the depth test; they must be
+    # nudged along the feature normal (here +Z).
+    graph = solid_to_scene(make_solid_scene(FeatureKind.HOLE), selected={(0, 0)})
+    ribbon = next(mesh for mesh in graph.meshes if mesh.overlay)
+    zs = ribbon.vertices[2::3]
+    assert min(zs) > 0.0
+
+
+def test_solid_to_scene_full_selection_drops_empty_base_mesh() -> None:
+    scene = make_solid_scene()
+    body = scene.bodies[0]
+    full = body.features[0].model_copy(update={"triangles": (0, 1)})
+    scene = SolidScene(source=scene.source, bodies=(body.model_copy(update={"features": (full,)}),))
+    graph = solid_to_scene(scene, selected={(0, 0)})
+    # No base material left: the accent fill plus its edge ribbon remain.
+    assert not any(mesh.color == _SOLID_COLOR for mesh in graph.meshes)
+    assert any(mesh.color == _SOLID_SELECTION_FILL for mesh in graph.meshes)
+    assert any(mesh.overlay for mesh in graph.meshes)
