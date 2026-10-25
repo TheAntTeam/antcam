@@ -73,7 +73,7 @@ run_*.py
 antcam_demo/
 dist_check/
 docs/rc1/
-project/
+/project/
 
 # Large test data
 tests/data/*.stl
